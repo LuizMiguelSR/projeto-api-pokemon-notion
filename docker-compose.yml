@@ -1,0 +1,41 @@
+services:
+  pokemon-notion-api:
+    build:
+      context: ./PokemonNotionApi
+      dockerfile: Dockerfile
+    container_name: pokemon-notion-api
+    ports:
+      - "8090:8090"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ASPNETCORE_URLS=http://+:8090
+      - Notion__Token=${NOTION_TOKEN}
+      - Notion__DatabaseId=${NOTION_DATABASE_ID}
+      - Notion__CardNameProperty=${NOTION_CARD_NAME_PROPERTY:-Name}
+      - Notion__CardUrlProperty=${NOTION_CARD_URL_PROPERTY:-Link}
+      - Notion__PriceProperty=${NOTION_PRICE_PROPERTY:-Preço}
+      - Notion__ImageProperty=${NOTION_IMAGE_PROPERTY:-Imagem}
+      - Notion__TypeProperty=${NOTION_TYPE_PROPERTY:-Tipo}
+      - Notion__RarityProperty=${NOTION_RARITY_PROPERTY:-Raridade}
+      - Notion__NumberProperty=${NOTION_NUMBER_PROPERTY:-Número}
+      - Notion__StatusProperty=${NOTION_STATUS_PROPERTY:-Status}
+      - Notion__DoneStatusValue=${NOTION_DONE_STATUS_VALUE:-Concluído}
+    depends_on:
+      - mysql
+
+  mysql:
+    image: mysql:8.4
+    container_name: pokemon-notion-mysql
+    restart: unless-stopped
+    environment:
+      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD:-root}
+      - MYSQL_DATABASE=${MYSQL_DATABASE:-pokemon}
+      - MYSQL_USER=${MYSQL_USER:-pokemon}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD:-pokemon}
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+
+volumes:
+  mysql_data:

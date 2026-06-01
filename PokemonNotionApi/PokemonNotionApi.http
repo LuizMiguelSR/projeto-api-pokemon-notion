@@ -1,0 +1,6 @@
+@PokemonNotionApi_HostAddress = http://localhost:5018
+
+GET {{PokemonNotionApi_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
