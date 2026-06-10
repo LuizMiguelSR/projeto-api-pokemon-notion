@@ -23,14 +23,38 @@ app.MapGet("/", () => Results.Ok(new { service = "PokemonNotionApi", status = "r
 
 app.MapPost("/api/sync/run", async (SyncService syncService, CancellationToken cancellationToken) =>
 {
-    var result = await syncService.SyncDatabaseAsync(cancellationToken);
-    return Results.Ok(result);
+    try
+    {
+        var result = await syncService.SyncDatabaseAsync(cancellationToken);
+        return Results.Ok(result);
+    }
+    catch (NotionApiException ex)
+    {
+        return Results.BadRequest(new
+        {
+            error = "notion_update_failed",
+            notionStatusCode = ex.StatusCode,
+            notionResponse = ex.ResponseBody
+        });
+    }
 });
 
 app.MapPost("/api/sync/page/{pageId}", async (string pageId, SyncService syncService, CancellationToken cancellationToken) =>
 {
-    var result = await syncService.SyncSinglePageAsync(pageId, cancellationToken);
-    return result is null ? Results.NotFound() : Results.Ok(result);
+    try
+    {
+        var result = await syncService.SyncSinglePageAsync(pageId, cancellationToken);
+        return result is null ? Results.NotFound() : Results.Ok(result);
+    }
+    catch (NotionApiException ex)
+    {
+        return Results.BadRequest(new
+        {
+            error = "notion_update_failed",
+            notionStatusCode = ex.StatusCode,
+            notionResponse = ex.ResponseBody
+        });
+    }
 });
 
 app.Run();

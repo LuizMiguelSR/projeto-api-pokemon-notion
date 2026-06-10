@@ -6,6 +6,10 @@ public sealed class CardData
     public string? Number { get; init; }
     public string? PriceText { get; init; }
     public decimal? PriceValue { get; init; }
+    public string? FoilPriceText { get; init; }
+    public decimal? FoilPriceValue { get; init; }
+    public string? ReverseFoilPriceText { get; init; }
+    public decimal? ReverseFoilPriceValue { get; init; }
     public string? ImageUrl { get; init; }
     public string? Type { get; init; }
     public string? Rarity { get; init; }

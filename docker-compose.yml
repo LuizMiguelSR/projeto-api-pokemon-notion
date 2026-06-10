@@ -1,5 +1,6 @@
 services:
   pokemon-notion-api:
+    restart: unless-stopped
     build:
       context: ./PokemonNotionApi
       dockerfile: Dockerfile
@@ -11,9 +12,15 @@ services:
       - ASPNETCORE_URLS=http://+:8090
       - Notion__Token=${NOTION_TOKEN}
       - Notion__DatabaseId=${NOTION_DATABASE_ID}
+      - Notion__LogDatabaseId=${NOTION_LOG_DATABASE_ID}
+      - Notion__LogNameProperty=${NOTION_LOG_NAME_PROPERTY:-Log}
+      - Notion__LogDateProperty=${NOTION_LOG_DATE_PROPERTY:-Data}
+      - Notion__LogStatusProperty=${NOTION_LOG_STATUS_PROPERTY:-Status}
       - Notion__CardNameProperty=${NOTION_CARD_NAME_PROPERTY:-Name}
       - Notion__CardUrlProperty=${NOTION_CARD_URL_PROPERTY:-Link}
       - Notion__PriceProperty=${NOTION_PRICE_PROPERTY:-Preço}
+      - Notion__FoilPriceProperty=${NOTION_FOIL_PRICE_PROPERTY:-Valor Foil}
+      - Notion__ReverseFoilPriceProperty=${NOTION_REVERSE_FOIL_PRICE_PROPERTY:-Valor Reverse Foil}
       - Notion__ImageProperty=${NOTION_IMAGE_PROPERTY:-Imagem}
       - Notion__TypeProperty=${NOTION_TYPE_PROPERTY:-Tipo}
       - Notion__RarityProperty=${NOTION_RARITY_PROPERTY:-Raridade}
@@ -22,6 +29,23 @@ services:
       - Notion__DoneStatusValue=${NOTION_DONE_STATUS_VALUE:-Concluído}
     depends_on:
       - mysql
+
+  pokemon-notion-sync:
+    image: curlimages/curl:8.16.0
+    container_name: pokemon-notion-sync
+    restart: unless-stopped
+    depends_on:
+      - pokemon-notion-api
+    command:
+      - sh
+      - -c
+      - |
+        while true; do
+          echo "Running Pokemon Notion sync at $$(date -Iseconds)"
+          curl -sS -X POST http://pokemon-notion-api:8090/api/sync/run
+          echo
+          sleep 43200
+        done
 
   mysql:
     image: mysql:8.4
