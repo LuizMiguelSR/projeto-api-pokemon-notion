@@ -14,12 +14,43 @@ public sealed class NotionClientService(HttpClient httpClient, IOptions<NotionOp
 
     public async Task<JsonElement?> QueryDatabaseAsync(CancellationToken cancellationToken)
     {
-        using var request = CreateRequest(HttpMethod.Post, $"databases/{_options.DatabaseId}/query", "{}");
-        using var response = await httpClient.SendAsync(request, cancellationToken);
-        if (!response.IsSuccessStatusCode) return null;
+        var allResults = new List<JsonElement>();
+        string? startCursor = null;
+        var hasMore = false;
 
-        using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
-        return doc.RootElement.Clone();
+        do
+        {
+            var payload = new Dictionary<string, object?>
+            {
+                ["page_size"] = 100
+            };
+
+            if (!string.IsNullOrWhiteSpace(startCursor))
+            {
+                payload["start_cursor"] = startCursor;
+            }
+
+            var body = JsonSerializer.Serialize(payload, JsonOptions);
+            using var request = CreateRequest(HttpMethod.Post, $"databases/{_options.DatabaseId}/query", body);
+            using var response = await httpClient.SendAsync(request, cancellationToken);
+            if (!response.IsSuccessStatusCode) return null;
+
+            using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+            var root = doc.RootElement;
+            if (root.TryGetProperty("results", out var results))
+            {
+                allResults.AddRange(results.EnumerateArray().Select(result => result.Clone()));
+            }
+
+            hasMore = root.TryGetProperty("has_more", out var hasMoreElement) && hasMoreElement.GetBoolean();
+            startCursor = hasMore && root.TryGetProperty("next_cursor", out var nextCursor)
+                ? nextCursor.GetString()
+                : null;
+        } while (hasMore && !string.IsNullOrWhiteSpace(startCursor));
+
+        var combined = JsonSerializer.Serialize(new { results = allResults }, JsonOptions);
+        using var combinedDoc = JsonDocument.Parse(combined);
+        return combinedDoc.RootElement.Clone();
     }
 
     public async Task<SyncLogResult> CreateSyncLogAsync(string status, string details, CancellationToken cancellationToken)
