@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using System.Net;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -11,6 +11,34 @@ namespace PokemonNotionApi.Services;
 public sealed class LigaPokemonScraperService(HttpClient httpClient, IOptions<LigaPokemonOptions> options)
 {
     private readonly LigaPokemonOptions _options = options.Value;
+
+    public Task<CardData?> GetCardByNumberAndEditionAsync(
+        string number,
+        string editionCode,
+        CancellationToken cancellationToken)
+    {
+        var searchUrl = BuildCardSearchUrl(number, editionCode);
+        return string.IsNullOrWhiteSpace(searchUrl)
+            ? Task.FromResult<CardData?>(null)
+            : GetCardAsync(searchUrl, cancellationToken);
+    }
+
+    public Task<CardData?> GetCardByNameAndPrintedNumberAsync(
+        string name,
+        string number,
+        string printedTotal,
+        CancellationToken cancellationToken)
+    {
+        var searchUrl = BuildCardUrl(name, number, printedTotal);
+        return string.IsNullOrWhiteSpace(searchUrl)
+            ? Task.FromResult<CardData?>(null)
+            : GetCardAsync(searchUrl, cancellationToken);
+    }
+
+    public string? GetCardUrlByNameAndPrintedNumber(string name, string number, string printedTotal)
+    {
+        return BuildCardUrl(name, number, printedTotal);
+    }
 
     public async Task<CardData?> GetCardAsync(string sourceUrl, CancellationToken cancellationToken)
     {
@@ -45,6 +73,63 @@ public sealed class LigaPokemonScraperService(HttpClient httpClient, IOptions<Li
             Rarity = rarity,
             SourceUrl = sourceUrl
         };
+    }
+
+    private string? BuildCardSearchUrl(string number, string editionCode)
+    {
+        if (string.IsNullOrWhiteSpace(number) || string.IsNullOrWhiteSpace(editionCode))
+        {
+            return null;
+        }
+
+        var normalizedNumber = NormalizeCardNumber(number);
+        if (string.IsNullOrWhiteSpace(normalizedNumber))
+        {
+            return null;
+        }
+
+        var query = Uri.EscapeDataString($"{normalizedNumber} ed={editionCode.Trim()}");
+        return $"{_options.BaseUrl.TrimEnd('/')}/?view=cards%2Fsearch&tipo=1&card={query}&searchprod=0";
+    }
+
+    private string? BuildCardUrl(string name, string number, string printedTotal)
+    {
+        if (string.IsNullOrWhiteSpace(name) ||
+            string.IsNullOrWhiteSpace(number) ||
+            string.IsNullOrWhiteSpace(printedTotal))
+        {
+            return null;
+        }
+
+        var normalizedNumber = NormalizeCardNumber(number);
+        var normalizedTotal = NormalizeCardNumber(printedTotal);
+        if (string.IsNullOrWhiteSpace(normalizedNumber) || string.IsNullOrWhiteSpace(normalizedTotal))
+        {
+            return null;
+        }
+
+        var query = Uri.EscapeDataString($"{name.Trim()} ({normalizedNumber}/{normalizedTotal})");
+        return $"{_options.BaseUrl.TrimEnd('/')}/?view=cards%2Fcard&tipo=1&card={query}";
+    }
+
+    private static string? NormalizeCardNumber(string number)
+    {
+        var cleanNumber = CleanText(number);
+        if (string.IsNullOrWhiteSpace(cleanNumber))
+        {
+            return null;
+        }
+
+        var slashIndex = cleanNumber.IndexOf('/');
+        if (slashIndex >= 0)
+        {
+            cleanNumber = cleanNumber[..slashIndex];
+        }
+
+        var digits = new string(cleanNumber.Where(char.IsDigit).ToArray());
+        return int.TryParse(digits, out var parsed)
+            ? parsed.ToString("000", CultureInfo.InvariantCulture)
+            : cleanNumber;
     }
 
     private static (decimal? Normal, decimal? Foil, decimal? ReverseFoil) ExtractPrices(string html)
@@ -153,6 +238,31 @@ public sealed class LigaPokemonScraperService(HttpClient httpClient, IOptions<Li
         return match.Success ? NormalizeUrl(WebUtility.HtmlDecode(match.Groups["value"].Value.Trim())) : null;
     }
 
+    private string? ExtractFirstCardUrl(string html)
+    {
+        var patterns = new[]
+        {
+            @"href=[""'](?<value>[^""']*view=cards%2Fcard[^""']+)[""']",
+            @"href=[""'](?<value>[^""']*view=cards/card[^""']+)[""']"
+        };
+
+        foreach (var pattern in patterns)
+        {
+            var match = Regex.Match(html, pattern, RegexOptions.IgnoreCase);
+            if (!match.Success) continue;
+
+            var href = WebUtility.HtmlDecode(match.Groups["value"].Value);
+            if (href.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+            {
+                return href;
+            }
+
+            return $"{_options.BaseUrl.TrimEnd('/')}/{href.TrimStart('/')}";
+        }
+
+        return null;
+    }
+
     private static string? NormalizeUrl(string? value)
     {
         if (string.IsNullOrWhiteSpace(value)) return null;
@@ -188,3 +298,4 @@ public sealed class LigaPokemonScraperService(HttpClient httpClient, IOptions<Li
         return Regex.Replace(value, @"\s+", " ").Trim();
     }
 }
+

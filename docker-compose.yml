@@ -25,7 +25,9 @@ services:
       - Notion__TypeProperty=${NOTION_TYPE_PROPERTY:-Tipo}
       - Notion__RarityProperty=${NOTION_RARITY_PROPERTY:-Raridade}
       - Notion__NumberProperty=${NOTION_NUMBER_PROPERTY:-Número}
+      - Notion__PrintedTotalProperty=${NOTION_PRINTED_TOTAL_PROPERTY:-printedTotal}
       - Notion__StatusProperty=${NOTION_STATUS_PROPERTY:-Status}
+      - Notion__NotStartedStatusValue=${NOTION_NOT_STARTED_STATUS_VALUE:-Não iniciada}
       - Notion__DoneStatusValue=${NOTION_DONE_STATUS_VALUE:-Concluído}
     depends_on:
       - mysql

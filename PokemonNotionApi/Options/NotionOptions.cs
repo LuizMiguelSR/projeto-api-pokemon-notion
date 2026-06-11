@@ -1,4 +1,4 @@
-namespace PokemonNotionApi.Options;
+﻿namespace PokemonNotionApi.Options;
 
 public sealed class NotionOptions
 {
@@ -12,7 +12,7 @@ public sealed class NotionOptions
     public string NotionVersion { get; set; } = "2022-06-28";
     public string CardNameProperty { get; set; } = "Name";
     public string CardUrlProperty { get; set; } = "Link";
-    public string PriceProperty { get; set; } = "Preço";
+    public string PriceProperty { get; set; } = "PreÃ§o";
     public string FoilPriceProperty { get; set; } = "Valor Foil";
     public string ReverseFoilPriceProperty { get; set; } = "Valor Reverse Foil";
     public string NormalQuantityProperty { get; set; } = "Qtde Normal";
@@ -21,7 +21,9 @@ public sealed class NotionOptions
     public string ImageProperty { get; set; } = "Imagem";
     public string TypeProperty { get; set; } = "Tipo";
     public string RarityProperty { get; set; } = "Raridade";
-    public string NumberProperty { get; set; } = "Número";
+    public string NumberProperty { get; set; } = "NÃºmero";
+    public string PrintedTotalProperty { get; set; } = "printedTotal";
     public string StatusProperty { get; set; } = "Status";
-    public string DoneStatusValue { get; set; } = "Concluído";
+    public string NotStartedStatusValue { get; set; } = "N\u00e3o iniciada";
+    public string DoneStatusValue { get; set; } = "ConcluÃ­do";
 }

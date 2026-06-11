@@ -1,4 +1,4 @@
-using PokemonNotionApi.Options;
+﻿using PokemonNotionApi.Options;
 using PokemonNotionApi.Services;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -39,12 +39,12 @@ app.MapPost("/api/sync/run", async (SyncService syncService, CancellationToken c
     }
 });
 
-app.MapPost("/api/sync/page/{pageId}", async (string pageId, SyncService syncService, CancellationToken cancellationToken) =>
+app.MapPost("/api/sync/run/search", async (SyncService syncService, CancellationToken cancellationToken) =>
 {
     try
     {
-        var result = await syncService.SyncSinglePageAsync(pageId, cancellationToken);
-        return result is null ? Results.NotFound() : Results.Ok(result);
+        var result = await syncService.SyncDatabaseByLigaSearchAsync(cancellationToken);
+        return Results.Ok(result);
     }
     catch (NotionApiException ex)
     {
@@ -57,4 +57,6 @@ app.MapPost("/api/sync/page/{pageId}", async (string pageId, SyncService syncSer
     }
 });
 
+
 app.Run();
+

@@ -1,4 +1,7 @@
+﻿using System.Globalization;
+using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using PokemonNotionApi.Models;
 using PokemonNotionApi.Options;
 using Microsoft.Extensions.Options;
@@ -33,7 +36,7 @@ public sealed class SyncService(
 
             try
             {
-                var result = await SyncPageInternalAsync(page, cancellationToken);
+                var result = await SyncPageInternalAsync(page, updateMetadata: false, appendImage: false, cancellationToken);
                 if (result is not null) updated++;
             }
             catch (Exception ex)
@@ -51,23 +54,61 @@ public sealed class SyncService(
         return new { processed, updated, failed, errors, syncLog };
     }
 
-    public async Task<object?> SyncSinglePageAsync(string pageId, CancellationToken cancellationToken)
+    public async Task<object> SyncDatabaseByLigaSearchAsync(CancellationToken cancellationToken)
     {
         var db = await notionClientService.QueryDatabaseAsync(cancellationToken);
-        if (db is null || !db.Value.TryGetProperty("results", out var results)) return null;
+        if (db is null || !db.Value.TryGetProperty("results", out var results))
+        {
+            return new { processed = 0, updated = 0 };
+        }
 
+        var processed = 0;
+        var updated = 0;
+        var skipped = 0;
+        var failed = 0;
+        var errors = new List<object>();
+        var pageResults = new List<object>();
         foreach (var page in results.EnumerateArray())
         {
-            if (string.Equals(page.GetProperty("id").GetString(), pageId, StringComparison.OrdinalIgnoreCase))
+            var pageId = page.GetProperty("id").GetString();
+            if (string.IsNullOrWhiteSpace(pageId)) continue;
+
+            try
             {
-                return await SyncPageInternalAsync(page, cancellationToken);
+                if (!HasStatus(page, _options.NotStartedStatusValue))
+                {
+                    skipped++;
+                    continue;
+                }
+
+                processed++;
+                var result = await SyncPageFromLigaSearchInternalAsync(page, cancellationToken);
+                if (result is not null)
+                {
+                    pageResults.Add(result);
+                    if (result.Updated) updated++;
+                }
+            }
+            catch (Exception ex)
+            {
+                failed++;
+                errors.Add(new { pageId, error = ex.Message });
             }
         }
 
-        return null;
+        var response = new { processed, updated, skipped, failed, errors, results = pageResults };
+        var status = failed == 0 ? "Sucesso" : "Erro";
+        var details = JsonSerializer.Serialize(response, new JsonSerializerOptions { WriteIndented = true });
+        var syncLog = await TryCreateSyncLogAsync(status, details, cancellationToken);
+
+        return new { processed, updated, skipped, failed, errors, results = pageResults, syncLog };
     }
 
-    private async Task<object?> SyncPageInternalAsync(JsonElement page, CancellationToken cancellationToken)
+    private async Task<object?> SyncPageInternalAsync(
+        JsonElement page,
+        bool updateMetadata,
+        bool appendImage,
+        CancellationToken cancellationToken)
     {
         var properties = page.GetProperty("properties");
         var url = ReadNotionPlainText(properties, _options.CardUrlProperty);
@@ -76,10 +117,10 @@ public sealed class SyncService(
         var card = await scraperService.GetCardAsync(url, cancellationToken);
         if (card is null) return null;
 
-        var updatePayload = BuildUpdatePayload(card, properties);
+        var updatePayload = BuildUpdatePayload(card, properties, updateMetadata);
         var pageId = page.GetProperty("id").GetString()!;
         await notionClientService.UpdatePageAsync(pageId, updatePayload, cancellationToken);
-        if (!string.IsNullOrWhiteSpace(card.ImageUrl))
+        if (appendImage && !string.IsNullOrWhiteSpace(card.ImageUrl))
         {
             await notionClientService.AppendImageBlockIfMissingAsync(pageId, card.ImageUrl, cancellationToken);
         }
@@ -95,6 +136,95 @@ public sealed class SyncService(
             card.ImageUrl,
             updatedProperties = GetPayloadPropertyNames(updatePayload)
         };
+    }
+
+    private async Task<SearchSyncPageResult?> SyncPageFromLigaSearchInternalAsync(JsonElement page, CancellationToken cancellationToken)
+    {
+        var properties = page.GetProperty("properties");
+        var name = ReadNotionPlainText(properties, _options.CardNameProperty);
+        var number = ReadNotionPlainText(properties, _options.NumberProperty);
+        var printedTotal = ReadNotionPlainText(properties, _options.PrintedTotalProperty);
+        if (string.IsNullOrWhiteSpace(name) ||
+            string.IsNullOrWhiteSpace(number) ||
+            string.IsNullOrWhiteSpace(printedTotal))
+        {
+            return new SearchSyncPageResult(
+                Updated: false,
+                Partial: false,
+                Reason: "missing_required_fields",
+                PageId: page.GetProperty("id").GetString(),
+                SourceUrl: null,
+                SourceName: name,
+                SourceNumber: number,
+                SourcePrintedTotal: printedTotal);
+        }
+
+        var pageId = page.GetProperty("id").GetString()!;
+        var sourceUrl = scraperService.GetCardUrlByNameAndPrintedNumber(name, number, printedTotal);
+        if (string.IsNullOrWhiteSpace(sourceUrl))
+        {
+            return new SearchSyncPageResult(
+                Updated: false,
+                Partial: false,
+                Reason: "could_not_build_liga_url",
+                PageId: pageId,
+                SourceUrl: null,
+                SourceName: name,
+                SourceNumber: number,
+                SourcePrintedTotal: printedTotal);
+        }
+
+        await notionClientService.UpdatePageAsync(pageId, BuildLigaUrlPayload(sourceUrl, properties), cancellationToken);
+
+        var card = await scraperService.GetCardAsync(sourceUrl, cancellationToken);
+        if (card is null)
+        {
+            return new SearchSyncPageResult(
+                Updated: true,
+                Partial: true,
+                Reason: "liga_card_not_found",
+                PageId: pageId,
+                SourceUrl: sourceUrl,
+                SourceName: name,
+                SourceNumber: number,
+                SourcePrintedTotal: printedTotal);
+        }
+
+        var updatePayload = BuildUpdatePayload(card, properties, updateMetadata: true);
+        await notionClientService.UpdatePageAsync(pageId, updatePayload, cancellationToken);
+        if (!string.IsNullOrWhiteSpace(card.ImageUrl))
+        {
+            await notionClientService.AppendImageBlockIfMissingAsync(pageId, card.ImageUrl, cancellationToken);
+        }
+
+        return new SearchSyncPageResult(
+            Updated: true,
+            Partial: false,
+            Reason: null,
+            PageId: pageId,
+            SourceUrl: sourceUrl,
+            SourceName: name,
+            SourceNumber: number,
+            SourcePrintedTotal: printedTotal,
+            CardName: card.Name,
+            CardNumber: card.Number,
+            PriceText: card.PriceText,
+            FoilPriceText: card.FoilPriceText,
+            ReverseFoilPriceText: card.ReverseFoilPriceText,
+            ImageUrl: card.ImageUrl,
+            UpdatedProperties: GetPayloadPropertyNames(updatePayload));
+    }
+
+    private bool HasStatus(JsonElement page, string expectedStatus)
+    {
+        if (string.IsNullOrWhiteSpace(expectedStatus) ||
+            !page.TryGetProperty("properties", out var properties))
+        {
+            return false;
+        }
+
+        var status = ReadNotionPlainText(properties, _options.StatusProperty);
+        return string.Equals(status, expectedStatus, StringComparison.OrdinalIgnoreCase);
     }
 
     private async Task<SyncLogResult> TryCreateSyncLogAsync(string status, string details, CancellationToken cancellationToken)
@@ -117,20 +247,32 @@ public sealed class SyncService(
         }
     }
 
-    private object BuildUpdatePayload(CardData card, JsonElement existingProperties)
+    private object BuildUpdatePayload(CardData card, JsonElement existingProperties, bool updateMetadata)
     {
         var p = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
 
-        AddTitle(p, existingProperties, _options.CardNameProperty, card.Name);
-        AddTextOrNumberIfPresent(p, existingProperties, _options.NumberProperty, card.Number);
         AddTextOrNumberIfPresent(p, existingProperties, _options.PriceProperty, card.PriceText, card.PriceValue);
         AddTextOrNumberIfPresent(p, existingProperties, _options.FoilPriceProperty, card.FoilPriceText, card.FoilPriceValue);
         AddTextOrNumberIfPresent(p, existingProperties, _options.ReverseFoilPriceProperty, card.ReverseFoilPriceText, card.ReverseFoilPriceValue);
-        AddFilesIfPresent(p, existingProperties, _options.ImageProperty, card.ImageUrl);
-        AddRichTextIfPresent(p, existingProperties, _options.TypeProperty, card.Type);
-        AddRichTextIfPresent(p, existingProperties, _options.RarityProperty, card.Rarity);
-        AddStatusIfPresent(p, existingProperties, _options.StatusProperty, _options.DoneStatusValue);
 
+        if (updateMetadata)
+        {
+            AddTitle(p, existingProperties, _options.CardNameProperty, card.Name);
+            AddTextOrNumberIfPresent(p, existingProperties, _options.NumberProperty, card.Number);
+            AddFilesIfPresent(p, existingProperties, _options.ImageProperty, card.ImageUrl);
+            AddRichTextIfPresent(p, existingProperties, _options.TypeProperty, card.Type);
+            AddRichTextIfPresent(p, existingProperties, _options.RarityProperty, card.Rarity);
+            AddUrlIfPresent(p, existingProperties, _options.CardUrlProperty, card.SourceUrl);
+            AddStatusIfPresent(p, existingProperties, _options.StatusProperty, _options.DoneStatusValue);
+        }
+
+        return new { properties = p };
+    }
+
+    private object BuildLigaUrlPayload(string sourceUrl, JsonElement existingProperties)
+    {
+        var p = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+        AddUrlIfPresent(p, existingProperties, _options.CardUrlProperty, sourceUrl);
         return new { properties = p };
     }
 
@@ -229,6 +371,28 @@ public sealed class SyncService(
         }
     }
 
+    private static void AddUrlIfPresent(
+        Dictionary<string, object?> properties,
+        JsonElement existingProperties,
+        string propertyName,
+        string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return;
+        }
+
+        var propertyType = GetPropertyType(existingProperties, propertyName);
+        if (propertyType == "url")
+        {
+            properties[propertyName] = new { url = value };
+        }
+        else if (propertyType == "rich_text")
+        {
+            properties[propertyName] = RichText(value);
+        }
+    }
+
     private static bool HasPropertyType(JsonElement properties, string propertyName, string expectedType)
     {
         return string.Equals(GetPropertyType(properties, propertyName), expectedType, StringComparison.Ordinal);
@@ -236,7 +400,7 @@ public sealed class SyncService(
 
     private static string? GetPropertyType(JsonElement properties, string propertyName)
     {
-        if (!properties.TryGetProperty(propertyName, out var prop)) return null;
+        if (!TryGetPropertyByName(properties, propertyName, out var prop)) return null;
         if (!prop.TryGetProperty("type", out var typeElement)) return null;
         return typeElement.GetString();
     }
@@ -287,17 +451,153 @@ public sealed class SyncService(
 
     private static string? ReadNotionPlainText(JsonElement properties, string propertyName)
     {
-        if (!properties.TryGetProperty(propertyName, out var prop)) return null;
+        if (!TryGetPropertyByName(properties, propertyName, out var prop)) return null;
         if (!prop.TryGetProperty("type", out var typeElement)) return null;
         var type = typeElement.GetString();
 
         return type switch
         {
             "url" => prop.TryGetProperty("url", out var url) ? url.GetString() : null,
+            "number" => prop.TryGetProperty("number", out var number) ? number.ToString() : null,
             "title" => JoinText(prop.GetProperty("title")),
             "rich_text" => JoinText(prop.GetProperty("rich_text")),
+            "formula" => ReadNotionFormulaValue(prop),
+            "rollup" => ReadNotionRollupValue(prop),
+            "unique_id" => ReadNotionUniqueIdValue(prop),
+            "select" => ReadNotionSelectValue(prop),
+            "status" => ReadNotionStatusValue(prop),
             _ => null
         };
+    }
+
+    private static bool TryGetPropertyByName(JsonElement properties, string propertyName, out JsonElement property)
+    {
+        if (properties.TryGetProperty(propertyName, out property))
+        {
+            return true;
+        }
+
+        var normalizedPropertyName = NormalizePropertyName(propertyName);
+        foreach (var candidate in properties.EnumerateObject())
+        {
+            if (NormalizePropertyName(candidate.Name) == normalizedPropertyName)
+            {
+                property = candidate.Value;
+                return true;
+            }
+        }
+
+        property = default;
+        return false;
+    }
+
+    private static string NormalizePropertyName(string value)
+    {
+        var normalized = value.Normalize(NormalizationForm.FormD);
+        var builder = new StringBuilder(normalized.Length);
+        foreach (var character in normalized)
+        {
+            if (CharUnicodeInfo.GetUnicodeCategory(character) != UnicodeCategory.NonSpacingMark)
+            {
+                builder.Append(char.ToLowerInvariant(character));
+            }
+        }
+
+        return builder.ToString().Normalize(NormalizationForm.FormC);
+    }
+
+    private static string? ReadNotionStatusValue(JsonElement prop)
+    {
+        if (!prop.TryGetProperty("status", out var status) ||
+            status.ValueKind != JsonValueKind.Object ||
+            !status.TryGetProperty("name", out var name))
+        {
+            return null;
+        }
+
+        return name.GetString();
+    }
+
+    private static string? ReadNotionSelectValue(JsonElement prop)
+    {
+        if (!prop.TryGetProperty("select", out var select) ||
+            select.ValueKind != JsonValueKind.Object ||
+            !select.TryGetProperty("name", out var name))
+        {
+            return null;
+        }
+
+        return name.GetString();
+    }
+
+    private static string? ReadNotionFormulaValue(JsonElement prop)
+    {
+        if (!prop.TryGetProperty("formula", out var formula) ||
+            !formula.TryGetProperty("type", out var typeElement))
+        {
+            return null;
+        }
+
+        var type = typeElement.GetString();
+        return type switch
+        {
+            "number" => formula.TryGetProperty("number", out var number) ? number.ToString() : null,
+            "string" => formula.TryGetProperty("string", out var text) ? text.GetString() : null,
+            _ => null
+        };
+    }
+
+    private static string? ReadNotionRollupValue(JsonElement prop)
+    {
+        if (!prop.TryGetProperty("rollup", out var rollup) ||
+            !rollup.TryGetProperty("type", out var typeElement))
+        {
+            return null;
+        }
+
+        var type = typeElement.GetString();
+        return type switch
+        {
+            "number" => rollup.TryGetProperty("number", out var number) ? number.ToString() : null,
+            "array" => ReadFirstRollupArrayValue(rollup),
+            _ => null
+        };
+    }
+
+    private static string? ReadFirstRollupArrayValue(JsonElement rollup)
+    {
+        if (!rollup.TryGetProperty("array", out var array) ||
+            array.ValueKind != JsonValueKind.Array ||
+            array.GetArrayLength() == 0)
+        {
+            return null;
+        }
+
+        var first = array.EnumerateArray().First();
+        if (!first.TryGetProperty("type", out var typeElement))
+        {
+            return null;
+        }
+
+        return typeElement.GetString() switch
+        {
+            "number" => first.TryGetProperty("number", out var number) ? number.ToString() : null,
+            "title" => first.TryGetProperty("title", out var title) ? JoinText(title) : null,
+            "rich_text" => first.TryGetProperty("rich_text", out var richText) ? JoinText(richText) : null,
+            "formula" => ReadNotionFormulaValue(first),
+            _ => null
+        };
+    }
+
+    private static string? ReadNotionUniqueIdValue(JsonElement prop)
+    {
+        if (!prop.TryGetProperty("unique_id", out var uniqueId) ||
+            !uniqueId.TryGetProperty("number", out var number))
+        {
+            return null;
+        }
+
+        return number.ToString();
     }
 
     private static string? JoinText(JsonElement arr)
@@ -315,4 +615,24 @@ public sealed class SyncService(
 
         return parts.Count == 0 ? null : string.Join(" ", parts);
     }
+
+    private sealed record SearchSyncPageResult(
+        bool Updated,
+        bool Partial,
+        string? Reason,
+        string? PageId,
+        string? SourceUrl,
+        string? SourceName,
+        string? SourceNumber,
+        string? SourcePrintedTotal,
+        string? CardName = null,
+        string? CardNumber = null,
+        string? PriceText = null,
+        string? FoilPriceText = null,
+        string? ReverseFoilPriceText = null,
+        string? ImageUrl = null,
+        string[]? UpdatedProperties = null);
+
 }
+
+
