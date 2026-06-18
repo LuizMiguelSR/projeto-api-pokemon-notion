@@ -72,8 +72,9 @@ public sealed class NotionClientService(HttpClient httpClient, IOptions<NotionOp
         }
 
         var properties = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
-        AddLogProperty(properties, schemaProperties, _options.LogNameProperty, $"Sincronizacao {DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss}");
-        AddDateProperty(properties, schemaProperties, _options.LogDateProperty, DateTimeOffset.UtcNow);
+        var syncTimestamp = GetFixedSyncTimestamp(DateTimeOffset.Now);
+        AddLogProperty(properties, schemaProperties, _options.LogNameProperty, $"Sincronizacao {syncTimestamp:yyyy-MM-dd HH:mm:ss}");
+        AddDateProperty(properties, schemaProperties, _options.LogDateProperty, syncTimestamp);
         AddStatusProperty(properties, schemaProperties, _options.LogStatusProperty, status);
 
         var payload = new
@@ -186,6 +187,20 @@ public sealed class NotionClientService(HttpClient httpClient, IOptions<NotionOp
         if (!schemaProperties.TryGetProperty(propertyName, out var property)) return null;
         if (!property.TryGetProperty("type", out var type)) return null;
         return type.GetString();
+    }
+
+    private static DateTimeOffset GetFixedSyncTimestamp(DateTimeOffset now)
+    {
+        var fixedHour = now.Hour >= 13 ? 13 : 1;
+        var fixedDate = now.Hour == 0 ? now.Date.AddDays(-1) : now.Date;
+        return new DateTimeOffset(
+            fixedDate.Year,
+            fixedDate.Month,
+            fixedDate.Day,
+            fixedHour,
+            0,
+            0,
+            now.Offset);
     }
 
     private static object Title(string value) => new

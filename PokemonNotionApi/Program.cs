@@ -21,6 +21,13 @@ if (app.Environment.IsDevelopment())
 
 app.MapGet("/", () => Results.Ok(new { service = "PokemonNotionApi", status = "running" }));
 
+app.MapGet("/health", () => Results.Ok(new
+{
+    status = "healthy",
+    service = "PokemonNotionApi",
+    checkedAt = DateTimeOffset.UtcNow
+}));
+
 app.MapPost("/api/sync/run", async (SyncService syncService, CancellationToken cancellationToken) =>
 {
     try
