@@ -1,0 +1,751 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Histórico de Preços</title>
+  <link rel="icon" type="image/svg+xml" href="https://upload.wikimedia.org/wikipedia/commons/5/53/Pok%C3%A9_Ball_icon.svg">
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #090d14;
+      --panel: #111827;
+      --panel-2: #0f1724;
+      --ink: #eef4ff;
+      --muted: #91a0b8;
+      --soft: #1c2738;
+      --line: #263449;
+      --accent: #14c6c9;
+      --normal: #ff5757;
+      --foil: #f4b740;
+      --reverse: #42d792;
+      --shadow: 0 22px 60px rgba(0, 0, 0, .34);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top left, rgba(20, 198, 201, .15), transparent 32rem),
+        linear-gradient(180deg, #0d1420, var(--bg));
+    }
+
+    .shell {
+      width: min(1240px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 30px 0 46px;
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+    }
+
+    .brand img {
+      width: 42px;
+      height: 42px;
+      padding: 4px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      object-fit: contain;
+    }
+
+    .brand strong {
+      display: block;
+      font-size: 20px;
+      line-height: 1.1;
+    }
+
+    .brand span {
+      display: block;
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .actions {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    button, a.button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 40px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 0 14px;
+      background: var(--panel);
+      color: var(--ink);
+      font-weight: 800;
+      text-decoration: none;
+      cursor: pointer;
+    }
+
+    button:hover, a.button:hover { border-color: var(--accent); }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 280px 1fr;
+      gap: 20px;
+      align-items: start;
+    }
+
+    .card, .chart-panel, .table-panel {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(17, 24, 39, .92);
+      box-shadow: var(--shadow);
+    }
+
+    .card {
+      position: sticky;
+      top: 18px;
+      overflow: hidden;
+    }
+
+    .cover {
+      display: grid;
+      place-items: center;
+      min-height: 360px;
+      padding: 18px;
+      background: linear-gradient(180deg, rgba(255, 255, 255, .05), rgba(255, 255, 255, .01));
+    }
+
+    .cover img {
+      max-width: 100%;
+      max-height: 330px;
+      object-fit: contain;
+      filter: drop-shadow(0 20px 26px rgba(0, 0, 0, .45));
+    }
+
+    .placeholder {
+      color: var(--muted);
+      text-align: center;
+      font-weight: 800;
+    }
+
+    .card-info {
+      padding: 18px;
+      border-top: 1px solid var(--line);
+    }
+
+    .card-info h1 {
+      margin: 0;
+      font-size: 25px;
+      line-height: 1.1;
+      letter-spacing: 0;
+    }
+
+    .meta {
+      margin: 10px 0 0;
+      color: var(--muted);
+      font-weight: 700;
+    }
+
+    .content {
+      min-width: 0;
+    }
+
+    .section-title {
+      margin: 0 0 12px;
+      color: var(--ink);
+      font-size: 18px;
+      font-weight: 900;
+    }
+
+    .periods {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+
+    .periods button {
+      border-color: var(--accent);
+      background: transparent;
+      color: #dffcff;
+    }
+
+    .periods button.active {
+      background: var(--accent);
+      color: #041014;
+    }
+
+    .chart-panel {
+      padding: 18px;
+      margin-bottom: 24px;
+    }
+
+    .summary {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 14px;
+      margin-bottom: 14px;
+    }
+
+    .headline, .metric {
+      min-height: 112px;
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel-2);
+    }
+
+    .headline > span, .metric span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 900;
+      text-transform: uppercase;
+    }
+
+    .headline strong {
+      display: block;
+      margin-top: 13px;
+      font-size: 20px;
+      line-height: 1;
+      white-space: nowrap;
+    }
+
+    .change {
+      display: block;
+      margin-top: 9px;
+      color: var(--normal);
+      font-size: 13px;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+
+    .metric strong {
+      display: block;
+      margin-top: 13px;
+      font-size: 20px;
+      white-space: nowrap;
+    }
+
+    .chart-wrap {
+      position: relative;
+      width: 100%;
+      height: 390px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #0b111b;
+      overflow: hidden;
+    }
+
+    .chart-tooltip {
+      position: absolute;
+      z-index: 2;
+      display: none;
+      min-width: 150px;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(8, 12, 20, .96);
+      box-shadow: 0 14px 34px rgba(0, 0, 0, .42);
+      color: var(--ink);
+      font-size: 13px;
+      font-weight: 800;
+      pointer-events: none;
+    }
+
+    .chart-tooltip small {
+      display: block;
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-top: 12px;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 800;
+    }
+
+    .legend i {
+      display: inline-block;
+      width: 11px;
+      height: 11px;
+      border-radius: 3px;
+      margin-right: 6px;
+      vertical-align: -1px;
+    }
+
+    .message {
+      margin-top: 12px;
+      color: var(--muted);
+      font-weight: 800;
+    }
+
+    .table-panel {
+      overflow: hidden;
+    }
+
+    .table-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+      padding: 16px 18px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .table-head p {
+      margin: 0;
+      color: var(--muted);
+      font-weight: 800;
+    }
+
+    .table-scroll {
+      overflow-x: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 760px;
+    }
+
+    th, td {
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      white-space: nowrap;
+    }
+
+    th {
+      color: #d7e3f4;
+      background: #172233;
+      font-size: 12px;
+      text-transform: uppercase;
+    }
+
+    td {
+      color: var(--ink);
+      font-weight: 700;
+    }
+
+    tbody tr:nth-child(even) {
+      background: rgba(255, 255, 255, .025);
+    }
+
+    .empty-row td {
+      color: var(--muted);
+      text-align: center;
+    }
+
+    @media (max-width: 940px) {
+      .layout { grid-template-columns: 1fr; }
+      .card { position: static; }
+      .cover { min-height: 270px; }
+      .cover img { max-height: 240px; }
+      .summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+
+    @media (max-width: 640px) {
+      .topbar { display: block; }
+      .actions { margin-top: 14px; justify-content: flex-start; }
+      .periods { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .chart-wrap { height: 320px; }
+      .summary { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div class="brand">
+        <img src="/pokemon-tracker.gif" alt="" onerror="this.onerror=null;this.src='https://upload.wikimedia.org/wikipedia/commons/5/53/Pok%C3%A9_Ball_icon.svg';">
+        <div>
+          <strong>Pokémon Price Tracker</strong>
+          <span>Histórico de preços da coleção</span>
+        </div>
+      </div>
+      <div class="actions">
+        <button id="refresh" type="button">Atualizar</button>
+        <a id="source" class="button" href="#" target="_blank" rel="noreferrer">Liga Pokémon</a>
+      </div>
+    </header>
+
+    <section class="layout">
+      <aside class="card">
+        <div class="cover" id="cover">
+          <div class="placeholder">Carregando carta...</div>
+        </div>
+        <div class="card-info">
+          <h1 id="title">Carta Pokémon</h1>
+          <p class="meta" id="meta">Histórico salvo a cada sincronização.</p>
+        </div>
+      </aside>
+
+      <section class="content">
+        <h2 class="section-title">Histórico de Preços</h2>
+        <div class="periods" role="group" aria-label="Período do histórico">
+          <button type="button" data-days="30">30 dias</button>
+          <button type="button" data-days="60">60 dias</button>
+          <button type="button" data-days="90" class="active">90 dias</button>
+          <button type="button" data-days="all">Todo período</button>
+        </div>
+
+        <section class="chart-panel">
+          <div class="summary">
+            <div class="headline">
+              <span>Preço normal</span>
+              <strong><span id="normal">--</span><span id="change" class="change"></span></strong>
+            </div>
+            <div class="metric"><span>Foil</span><strong id="foil">--</strong></div>
+            <div class="metric"><span>Reverse Foil</span><strong id="reverse">--</strong></div>
+            <div class="metric"><span>Snapshots</span><strong id="count">0</strong></div>
+          </div>
+
+          <div class="chart-wrap">
+            <canvas id="chart" aria-label="Gráfico de evolução de preço"></canvas>
+            <div id="tooltip" class="chart-tooltip"></div>
+          </div>
+
+          <div class="legend">
+            <span><i style="background: var(--normal)"></i>Normal</span>
+            <span><i style="background: var(--foil)"></i>Foil</span>
+            <span><i style="background: var(--reverse)"></i>Reverse Foil</span>
+          </div>
+          <div class="message" id="message"></div>
+        </section>
+
+        <section class="table-panel">
+          <div class="table-head">
+            <div>
+              <h2 class="section-title">Dados Históricos</h2>
+              <p id="table-subtitle">Registros do período selecionado</p>
+            </div>
+          </div>
+          <div class="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>Data</th>
+                  <th>Normal</th>
+                  <th>Foil</th>
+                  <th>Reverse Foil</th>
+                  <th>Carta</th>
+                  <th>Número</th>
+                </tr>
+              </thead>
+              <tbody id="rows"></tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+    </section>
+  </main>
+
+  <script>
+    const pageId = decodeURIComponent(location.pathname.split("/")[2] || "");
+    const fmt = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
+    const dateFmt = new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" });
+    let fullHistory = [];
+    let selectedPeriod = "90";
+    let hoverPoints = [];
+
+    const els = {
+      cover: document.getElementById("cover"),
+      title: document.getElementById("title"),
+      meta: document.getElementById("meta"),
+      normal: document.getElementById("normal"),
+      foil: document.getElementById("foil"),
+      reverse: document.getElementById("reverse"),
+      count: document.getElementById("count"),
+      change: document.getElementById("change"),
+      chart: document.getElementById("chart"),
+      message: document.getElementById("message"),
+      tooltip: document.getElementById("tooltip"),
+      source: document.getElementById("source"),
+      refresh: document.getElementById("refresh"),
+      rows: document.getElementById("rows"),
+      tableSubtitle: document.getElementById("table-subtitle"),
+      periods: [...document.querySelectorAll("[data-days]")]
+    };
+
+    function money(value) {
+      return value == null ? "-" : fmt.format(Number(value));
+    }
+
+    async function load() {
+      els.message.textContent = "Carregando histórico...";
+      const response = await fetch(`/api/cards/${encodeURIComponent(pageId)}/prices?limit=500`);
+      if (!response.ok) throw new Error("Não foi possível carregar o histórico.");
+      const data = await response.json();
+      fullHistory = (data.history || []).filter(item => item && item.capturedAt);
+      render();
+    }
+
+    function filteredHistory() {
+      if (selectedPeriod === "all") return fullHistory;
+      const days = Number(selectedPeriod);
+      const limit = new Date();
+      limit.setDate(limit.getDate() - days);
+      return fullHistory.filter(item => new Date(item.capturedAt) >= limit);
+    }
+
+    function render() {
+      const history = filteredHistory();
+      const latest = history[history.length - 1] || fullHistory[fullHistory.length - 1];
+
+      if (!latest) {
+        els.message.textContent = "Ainda não há histórico para esta carta.";
+        els.count.textContent = "0";
+        draw([]);
+        renderTable([]);
+        return;
+      }
+
+      els.title.textContent = latest.cardName || "Carta Pokémon";
+      els.meta.textContent = latest.cardNumber
+        ? `Número ${latest.cardNumber} - atualizado em ${new Date(latest.capturedAt).toLocaleString("pt-BR")}`
+        : `Atualizado em ${new Date(latest.capturedAt).toLocaleString("pt-BR")}`;
+      els.normal.textContent = money(latest.normalPrice);
+      els.foil.textContent = money(latest.foilPrice);
+      els.reverse.textContent = money(latest.reverseFoilPrice);
+      els.count.textContent = String(history.length);
+      els.source.href = latest.sourceUrl || "#";
+      els.source.style.display = latest.sourceUrl ? "inline-flex" : "none";
+
+      if (latest.imageUrl) {
+        els.cover.innerHTML = "";
+        const image = document.createElement("img");
+        image.alt = latest.cardName || "Carta Pokémon";
+        image.src = latest.imageUrl;
+        els.cover.appendChild(image);
+      }
+
+      const firstNormal = history.find(item => item.normalPrice != null)?.normalPrice;
+      const lastNormal = latest.normalPrice;
+      if (firstNormal != null && lastNormal != null && history.length > 1) {
+        const diff = Number(lastNormal) - Number(firstNormal);
+        const percent = Number(firstNormal) === 0 ? 0 : (diff / Number(firstNormal)) * 100;
+        els.change.textContent = `${diff >= 0 ? "+" : "-"} ${money(Math.abs(diff))} (${percent.toFixed(1).replace(".", ",")}%)`;
+        els.change.style.color = diff >= 0 ? "var(--reverse)" : "var(--normal)";
+      } else {
+        els.change.textContent = "";
+      }
+
+      els.message.textContent = history.length === 1
+        ? "Com um único snapshot, o gráfico mostra o ponto inicial."
+        : `${history.length} snapshots no período selecionado.`;
+      els.tableSubtitle.textContent = selectedPeriod === "all"
+        ? "Todos os registros salvos"
+        : `Registros dos últimos ${selectedPeriod} dias`;
+
+      draw(history);
+      renderTable(history);
+    }
+
+    function renderTable(history) {
+      const rows = [...history].reverse();
+      if (rows.length === 0) {
+        els.rows.innerHTML = '<tr class="empty-row"><td colspan="6">Nenhum registro para o período selecionado.</td></tr>';
+        return;
+      }
+
+      els.rows.innerHTML = rows.map(item => `
+        <tr>
+          <td>${dateFmt.format(new Date(item.capturedAt))}</td>
+          <td>${money(item.normalPrice)}</td>
+          <td>${money(item.foilPrice)}</td>
+          <td>${money(item.reverseFoilPrice)}</td>
+          <td>${escapeHtml(item.cardName || "-")}</td>
+          <td>${escapeHtml(item.cardNumber || "-")}</td>
+        </tr>
+      `).join("");
+    }
+
+    function draw(history) {
+      hoverPoints = [];
+      const canvas = els.chart;
+      const rect = canvas.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = Math.max(1, Math.floor(rect.width * dpr));
+      canvas.height = Math.max(1, Math.floor(rect.height * dpr));
+      const ctx = canvas.getContext("2d");
+      ctx.scale(dpr, dpr);
+      ctx.clearRect(0, 0, rect.width, rect.height);
+
+      const pad = { left: 70, right: 28, top: 26, bottom: 44 };
+      const width = rect.width - pad.left - pad.right;
+      const height = rect.height - pad.top - pad.bottom;
+      const series = [
+        ["normalPrice", "Normal", getCss("--normal")],
+        ["foilPrice", "Foil", getCss("--foil")],
+        ["reverseFoilPrice", "Reverse Foil", getCss("--reverse")]
+      ];
+      const values = history.flatMap(item => series.map(([key]) => item[key]).filter(v => v != null).map(Number));
+      const maxValue = values.length ? Math.max(...values) : 10;
+      const minValue = values.length ? Math.min(...values) : 0;
+      const padding = Math.max((maxValue - minValue) * .15, 1);
+      const max = maxValue + padding;
+      const min = Math.max(0, minValue - padding);
+
+      ctx.strokeStyle = getCss("--line");
+      ctx.lineWidth = 1;
+      ctx.fillStyle = getCss("--muted");
+      ctx.font = "12px Inter, system-ui, sans-serif";
+
+      for (let i = 0; i <= 4; i++) {
+        const y = pad.top + (height / 4) * i;
+        const value = max - ((max - min) / 4) * i;
+        ctx.beginPath();
+        ctx.moveTo(pad.left, y);
+        ctx.lineTo(pad.left + width, y);
+        ctx.stroke();
+        ctx.fillText(fmt.format(value), 10, y + 4);
+      }
+
+      if (history.length === 0) return;
+
+      for (const [key, label, color] of series) {
+        const points = history
+          .map((item, index) => {
+            if (item[key] == null) return null;
+            const x = pad.left + (history.length === 1 ? width / 2 : (width / (history.length - 1)) * index);
+            const y = pad.top + height - ((Number(item[key]) - min) / (max - min || 1)) * height;
+            return { x, y, label, color, value: Number(item[key]), date: item.capturedAt };
+          })
+          .filter(Boolean);
+
+        if (points.length === 0) continue;
+
+        ctx.save();
+        if (key === "normalPrice" && points.length > 1) {
+          const gradient = ctx.createLinearGradient(0, pad.top, 0, pad.top + height);
+          gradient.addColorStop(0, "rgba(255, 87, 87, .28)");
+          gradient.addColorStop(1, "rgba(255, 87, 87, 0)");
+          ctx.beginPath();
+          ctx.moveTo(points[0].x, pad.top + height);
+          points.forEach(point => ctx.lineTo(point.x, point.y));
+          ctx.lineTo(points[points.length - 1].x, pad.top + height);
+          ctx.closePath();
+          ctx.fillStyle = gradient;
+          ctx.fill();
+        }
+        ctx.restore();
+
+        ctx.strokeStyle = color;
+        ctx.lineWidth = key === "normalPrice" ? 3 : 2;
+        ctx.setLineDash(key === "normalPrice" ? [6, 5] : []);
+        ctx.beginPath();
+        points.forEach((point, index) => index === 0 ? ctx.moveTo(point.x, point.y) : ctx.lineTo(point.x, point.y));
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        ctx.fillStyle = color;
+        points.forEach(point => {
+          ctx.beginPath();
+          ctx.arc(point.x, point.y, 4, 0, Math.PI * 2);
+          ctx.fill();
+          hoverPoints.push(point);
+        });
+      }
+
+      const first = history[0];
+      const last = history[history.length - 1];
+      ctx.fillStyle = getCss("--muted");
+      ctx.fillText(dateFmt.format(new Date(first.capturedAt)), pad.left, rect.height - 15);
+      ctx.textAlign = "right";
+      ctx.fillText(dateFmt.format(new Date(last.capturedAt)), pad.left + width, rect.height - 15);
+      ctx.textAlign = "left";
+    }
+
+    function showTooltip(event) {
+      const rect = els.chart.getBoundingClientRect();
+      const x = event.clientX - rect.left;
+      const y = event.clientY - rect.top;
+      const point = hoverPoints
+        .map(item => ({ item, distance: Math.hypot(item.x - x, item.y - y) }))
+        .filter(hit => hit.distance <= 12)
+        .sort((a, b) => a.distance - b.distance)[0]?.item;
+
+      if (!point) {
+        els.tooltip.style.display = "none";
+        return;
+      }
+
+      els.tooltip.innerHTML = `
+        <span style="color:${point.color}">${point.label}</span>: ${money(point.value)}
+        <small>${dateFmt.format(new Date(point.date))}</small>
+      `;
+      els.tooltip.style.display = "block";
+      const tooltipWidth = els.tooltip.offsetWidth;
+      const tooltipHeight = els.tooltip.offsetHeight;
+      const left = Math.min(Math.max(point.x + 12, 8), rect.width - tooltipWidth - 8);
+      const top = Math.min(Math.max(point.y - tooltipHeight - 12, 8), rect.height - tooltipHeight - 8);
+      els.tooltip.style.left = `${left}px`;
+      els.tooltip.style.top = `${top}px`;
+    }
+
+    function getCss(name) {
+      return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    }
+
+    function escapeHtml(value) {
+      return String(value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
+    els.periods.forEach(button => {
+      button.addEventListener("click", () => {
+        selectedPeriod = button.dataset.days;
+        els.periods.forEach(item => item.classList.toggle("active", item === button));
+        render();
+      });
+    });
+
+    els.refresh.addEventListener("click", () => load().catch(showError));
+    window.addEventListener("resize", () => render());
+    els.chart.addEventListener("mousemove", showTooltip);
+    els.chart.addEventListener("mouseleave", () => {
+      els.tooltip.style.display = "none";
+    });
+
+    function showError(error) {
+      els.message.textContent = error.message;
+    }
+
+    load().catch(showError);
+  </script>
+</body>
+</html>
