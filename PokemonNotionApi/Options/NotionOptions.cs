@@ -12,6 +12,7 @@ public sealed class NotionOptions
     public string NotionVersion { get; set; } = "2022-06-28";
     public string CardNameProperty { get; set; } = "Name";
     public string CardUrlProperty { get; set; } = "Link";
+    public string ChartUrlProperty { get; set; } = "Grafico de Precos";
     public string PriceProperty { get; set; } = "PreÃ§o";
     public string FoilPriceProperty { get; set; } = "Valor Foil";
     public string ReverseFoilPriceProperty { get; set; } = "Valor Reverse Foil";

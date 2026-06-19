@@ -11,10 +11,13 @@ namespace PokemonNotionApi.Services;
 public sealed class SyncService(
     NotionClientService notionClientService,
     LigaPokemonScraperService scraperService,
+    CardPriceHistoryRepository priceHistoryRepository,
     IOptions<NotionOptions> options,
+    IOptions<AppOptions> appOptions,
     ILogger<SyncService> logger)
 {
     private readonly NotionOptions _options = options.Value;
+    private readonly AppOptions _appOptions = appOptions.Value;
 
     public async Task<object> SyncDatabaseAsync(CancellationToken cancellationToken)
     {
@@ -114,11 +117,27 @@ public sealed class SyncService(
         var url = ReadNotionPlainText(properties, _options.CardUrlProperty);
         if (string.IsNullOrWhiteSpace(url)) return null;
 
-        var card = await scraperService.GetCardAsync(url, cancellationToken);
-        if (card is null) return null;
-
-        var updatePayload = BuildUpdatePayload(card, properties, updateMetadata);
         var pageId = page.GetProperty("id").GetString()!;
+        var card = await scraperService.GetCardAsync(url, cancellationToken);
+        if (card is null)
+        {
+            var chartPayload = BuildChartUrlPayload(properties, pageId);
+            if (chartPayload is null)
+            {
+                return null;
+            }
+
+            await notionClientService.UpdatePageAsync(pageId, chartPayload, cancellationToken);
+            return new
+            {
+                pageId,
+                reason = "liga_card_not_found",
+                updatedProperties = GetPayloadPropertyNames(chartPayload)
+            };
+        }
+
+        var updatePayload = BuildUpdatePayload(card, properties, updateMetadata, pageId);
+        await SavePriceHistoryAsync(pageId, card, cancellationToken);
         await notionClientService.UpdatePageAsync(pageId, updatePayload, cancellationToken);
         if (appendImage && !string.IsNullOrWhiteSpace(card.ImageUrl))
         {
@@ -174,7 +193,7 @@ public sealed class SyncService(
                 SourcePrintedTotal: printedTotal);
         }
 
-        await notionClientService.UpdatePageAsync(pageId, BuildLigaUrlPayload(sourceUrl, properties), cancellationToken);
+        await notionClientService.UpdatePageAsync(pageId, BuildLigaUrlPayload(sourceUrl, properties, pageId), cancellationToken);
 
         var card = await scraperService.GetCardAsync(sourceUrl, cancellationToken);
         if (card is null)
@@ -190,7 +209,8 @@ public sealed class SyncService(
                 SourcePrintedTotal: printedTotal);
         }
 
-        var updatePayload = BuildUpdatePayload(card, properties, updateMetadata: true);
+        var updatePayload = BuildUpdatePayload(card, properties, updateMetadata: true, pageId);
+        await SavePriceHistoryAsync(pageId, card, cancellationToken);
         await notionClientService.UpdatePageAsync(pageId, updatePayload, cancellationToken);
         if (!string.IsNullOrWhiteSpace(card.ImageUrl))
         {
@@ -247,13 +267,14 @@ public sealed class SyncService(
         }
     }
 
-    private object BuildUpdatePayload(CardData card, JsonElement existingProperties, bool updateMetadata)
+    private object BuildUpdatePayload(CardData card, JsonElement existingProperties, bool updateMetadata, string pageId)
     {
         var p = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
 
         AddTextOrNumberIfPresent(p, existingProperties, _options.PriceProperty, card.PriceText, card.PriceValue);
         AddTextOrNumberIfPresent(p, existingProperties, _options.FoilPriceProperty, card.FoilPriceText, card.FoilPriceValue);
         AddTextOrNumberIfPresent(p, existingProperties, _options.ReverseFoilPriceProperty, card.ReverseFoilPriceText, card.ReverseFoilPriceValue);
+        AddUrlIfPresent(p, existingProperties, _options.ChartUrlProperty, GetChartUrl(pageId));
 
         if (updateMetadata)
         {
@@ -274,6 +295,53 @@ public sealed class SyncService(
         var p = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
         AddUrlIfPresent(p, existingProperties, _options.CardUrlProperty, sourceUrl);
         return new { properties = p };
+    }
+
+    private object BuildLigaUrlPayload(string sourceUrl, JsonElement existingProperties, string pageId)
+    {
+        var p = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+        AddUrlIfPresent(p, existingProperties, _options.CardUrlProperty, sourceUrl);
+        AddUrlIfPresent(p, existingProperties, _options.ChartUrlProperty, GetChartUrl(pageId));
+        return new { properties = p };
+    }
+
+    private object? BuildChartUrlPayload(JsonElement existingProperties, string pageId)
+    {
+        var p = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+        AddUrlIfPresent(p, existingProperties, _options.ChartUrlProperty, GetChartUrl(pageId));
+        return p.Count == 0 ? null : new { properties = p };
+    }
+
+    private async Task SavePriceHistoryAsync(string pageId, CardData card, CancellationToken cancellationToken)
+    {
+        if (!card.PriceValue.HasValue &&
+            !card.FoilPriceValue.HasValue &&
+            !card.ReverseFoilPriceValue.HasValue)
+        {
+            return;
+        }
+
+        await priceHistoryRepository.SaveAsync(new CardPriceSnapshot
+        {
+            PageId = pageId,
+            CardName = card.Name,
+            CardNumber = card.Number,
+            SourceUrl = card.SourceUrl,
+            ImageUrl = card.ImageUrl,
+            NormalPrice = card.PriceValue,
+            FoilPrice = card.FoilPriceValue,
+            ReverseFoilPrice = card.ReverseFoilPriceValue,
+            CapturedAt = DateTimeOffset.UtcNow
+        }, cancellationToken);
+    }
+
+    private string GetChartUrl(string pageId)
+    {
+        var baseUrl = string.IsNullOrWhiteSpace(_appOptions.PublicBaseUrl)
+            ? "http://localhost:8090"
+            : _appOptions.PublicBaseUrl.TrimEnd('/');
+
+        return $"{baseUrl}/cards/{Uri.EscapeDataString(pageId)}/prices";
     }
 
     private static string[] GetPayloadPropertyNames(object payload)

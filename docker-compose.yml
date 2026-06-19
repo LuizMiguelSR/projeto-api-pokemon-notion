@@ -10,6 +10,8 @@ services:
     environment:
       - ASPNETCORE_ENVIRONMENT=Production
       - ASPNETCORE_URLS=http://+:8090
+      - App__PublicBaseUrl=${APP_PUBLIC_BASE_URL:-http://localhost:8090}
+      - Database__ConnectionString=Server=mysql;Port=3306;Database=${MYSQL_DATABASE:-pokemon};User=${MYSQL_USER:-pokemon};Password=${MYSQL_PASSWORD:-pokemon};TreatTinyAsBoolean=false
       - Notion__Token=${NOTION_TOKEN}
       - Notion__DatabaseId=${NOTION_DATABASE_ID}
       - Notion__LogDatabaseId=${NOTION_LOG_DATABASE_ID}
@@ -18,6 +20,7 @@ services:
       - Notion__LogStatusProperty=${NOTION_LOG_STATUS_PROPERTY:-Status}
       - Notion__CardNameProperty=${NOTION_CARD_NAME_PROPERTY:-Name}
       - Notion__CardUrlProperty=${NOTION_CARD_URL_PROPERTY:-Link}
+      - Notion__ChartUrlProperty=${NOTION_CHART_URL_PROPERTY:-Grafico de Precos}
       - Notion__PriceProperty=${NOTION_PRICE_PROPERTY:-Preço}
       - Notion__FoilPriceProperty=${NOTION_FOIL_PRICE_PROPERTY:-Valor Foil}
       - Notion__ReverseFoilPriceProperty=${NOTION_REVERSE_FOIL_PRICE_PROPERTY:-Valor Reverse Foil}

@@ -121,6 +121,16 @@ public sealed class NotionClientService(HttpClient httpClient, IOptions<NotionOp
         }
     }
 
+    public async Task<JsonElement?> GetPageAsync(string pageId, CancellationToken cancellationToken)
+    {
+        using var request = CreateRequest(HttpMethod.Get, $"pages/{pageId}");
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        if (!response.IsSuccessStatusCode) return null;
+
+        using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+        return doc.RootElement.Clone();
+    }
+
     private async Task<JsonElement?> GetDatabaseSchemaAsync(string databaseId, CancellationToken cancellationToken)
     {
         using var request = CreateRequest(HttpMethod.Get, $"databases/{databaseId}");
