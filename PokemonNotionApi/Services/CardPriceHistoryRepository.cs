@@ -54,11 +54,11 @@ public sealed class CardPriceHistoryRepository(IOptions<DatabaseOptions> options
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
-    public async Task SaveAsync(CardPriceSnapshot snapshot, CancellationToken cancellationToken)
+    public async Task<bool> SaveAsync(CardPriceSnapshot snapshot, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(_connectionString))
         {
-            return;
+            return false;
         }
 
         await using var connection = new MySqlConnection(_connectionString);
@@ -83,6 +83,7 @@ public sealed class CardPriceHistoryRepository(IOptions<DatabaseOptions> options
         command.Parameters.AddWithValue("@captured_at", snapshot.CapturedAt.UtcDateTime);
 
         await command.ExecuteNonQueryAsync(cancellationToken);
+        return true;
     }
 
     public async Task<IReadOnlyList<CardPriceSnapshot>> GetHistoryAsync(

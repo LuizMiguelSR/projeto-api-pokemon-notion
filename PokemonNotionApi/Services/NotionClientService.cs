@@ -9,6 +9,7 @@ namespace PokemonNotionApi.Services;
 public sealed class NotionClientService(HttpClient httpClient, IOptions<NotionOptions> options)
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+    private static readonly TimeZoneInfo SaoPauloTimeZone = GetSaoPauloTimeZone();
     private readonly NotionOptions _options = options.Value;
     private const string NotionBaseUrl = "https://api.notion.com/v1/";
 
@@ -72,7 +73,7 @@ public sealed class NotionClientService(HttpClient httpClient, IOptions<NotionOp
         }
 
         var properties = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
-        var syncTimestamp = GetFixedSyncTimestamp(DateTimeOffset.Now);
+        var syncTimestamp = GetFixedSyncTimestamp(GetSaoPauloNow());
         AddLogProperty(properties, schemaProperties, _options.LogNameProperty, $"Sincronizacao {syncTimestamp:yyyy-MM-dd HH:mm:ss}");
         AddDateProperty(properties, schemaProperties, _options.LogDateProperty, syncTimestamp);
         AddStatusProperty(properties, schemaProperties, _options.LogStatusProperty, status);
@@ -211,6 +212,23 @@ public sealed class NotionClientService(HttpClient httpClient, IOptions<NotionOp
             0,
             0,
             now.Offset);
+    }
+
+    private static DateTimeOffset GetSaoPauloNow()
+    {
+        return TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, SaoPauloTimeZone);
+    }
+
+    private static TimeZoneInfo GetSaoPauloTimeZone()
+    {
+        try
+        {
+            return TimeZoneInfo.FindSystemTimeZoneById("America/Sao_Paulo");
+        }
+        catch (TimeZoneNotFoundException)
+        {
+            return TimeZoneInfo.FindSystemTimeZoneById("E. South America Standard Time");
+        }
     }
 
     private static object Title(string value) => new

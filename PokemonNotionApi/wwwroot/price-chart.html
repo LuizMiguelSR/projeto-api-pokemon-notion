@@ -474,6 +474,15 @@
     const pageId = decodeURIComponent(location.pathname.split("/")[2] || "");
     const fmt = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
     const dateFmt = new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" });
+    const timeFmt = new Intl.DateTimeFormat("pt-BR", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    const dateTimeFmt = new Intl.DateTimeFormat("pt-BR", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit"
+    });
     let fullHistory = [];
     let selectedPeriod = "90";
     let hoverPoints = [];
@@ -508,6 +517,20 @@
       const data = await response.json();
       fullHistory = (data.history || []).filter(item => item && item.capturedAt);
       render();
+    }
+
+    async function syncAndLoad() {
+      els.refresh.disabled = true;
+      els.message.textContent = "Sincronizando preço...";
+
+      try {
+        const response = await fetch(`/api/cards/${encodeURIComponent(pageId)}/sync`, { method: "POST" });
+        if (!response.ok) throw new Error("Não foi possível sincronizar esta carta.");
+
+        await load();
+      } finally {
+        els.refresh.disabled = false;
+      }
     }
 
     function filteredHistory() {
@@ -580,7 +603,7 @@
 
       els.rows.innerHTML = rows.map(item => `
         <tr>
-          <td>${dateFmt.format(new Date(item.capturedAt))}</td>
+          <td>${dateTimeFmt.format(new Date(item.capturedAt))}</td>
           <td>${money(item.normalPrice)}</td>
           <td>${money(item.foilPrice)}</td>
           <td>${money(item.reverseFoilPrice)}</td>
@@ -612,6 +635,10 @@
       const values = history.flatMap(item => series.map(([key]) => item[key]).filter(v => v != null).map(Number));
       const maxValue = values.length ? Math.max(...values) : 10;
       const minValue = values.length ? Math.min(...values) : 0;
+      const timestamps = history.map(item => new Date(item.capturedAt).getTime());
+      const firstTime = Math.min(...timestamps);
+      const lastTime = Math.max(...timestamps);
+      const timeRange = lastTime - firstTime;
       const padding = Math.max((maxValue - minValue) * .15, 1);
       const max = maxValue + padding;
       const min = Math.max(0, minValue - padding);
@@ -637,7 +664,8 @@
         const points = history
           .map((item, index) => {
             if (item[key] == null) return null;
-            const x = pad.left + (history.length === 1 ? width / 2 : (width / (history.length - 1)) * index);
+            const timestamp = new Date(item.capturedAt).getTime();
+            const x = pad.left + (timeRange === 0 ? width / 2 : ((timestamp - firstTime) / timeRange) * width);
             const y = pad.top + height - ((Number(item[key]) - min) / (max - min || 1)) * height;
             return { x, y, label, color, value: Number(item[key]), date: item.capturedAt };
           })
@@ -680,10 +708,20 @@
       const first = history[0];
       const last = history[history.length - 1];
       ctx.fillStyle = getCss("--muted");
-      ctx.fillText(dateFmt.format(new Date(first.capturedAt)), pad.left, rect.height - 15);
+      ctx.fillText(chartTickLabel(first.capturedAt, first.capturedAt, last.capturedAt), pad.left, rect.height - 15);
       ctx.textAlign = "right";
-      ctx.fillText(dateFmt.format(new Date(last.capturedAt)), pad.left + width, rect.height - 15);
+      ctx.fillText(chartTickLabel(last.capturedAt, first.capturedAt, last.capturedAt), pad.left + width, rect.height - 15);
       ctx.textAlign = "left";
+    }
+
+    function chartTickLabel(value, firstValue, lastValue) {
+      const date = new Date(value);
+      const first = new Date(firstValue);
+      const last = new Date(lastValue);
+
+      return date.toDateString() === first.toDateString() && date.toDateString() === last.toDateString()
+        ? timeFmt.format(date)
+        : dateFmt.format(date);
     }
 
     function showTooltip(event) {
@@ -702,7 +740,7 @@
 
       els.tooltip.innerHTML = `
         <span style="color:${point.color}">${point.label}</span>: ${money(point.value)}
-        <small>${dateFmt.format(new Date(point.date))}</small>
+        <small>${dateTimeFmt.format(new Date(point.date))}</small>
       `;
       els.tooltip.style.display = "block";
       const tooltipWidth = els.tooltip.offsetWidth;
@@ -734,7 +772,7 @@
       });
     });
 
-    els.refresh.addEventListener("click", () => load().catch(showError));
+    els.refresh.addEventListener("click", () => syncAndLoad().catch(showError));
     window.addEventListener("resize", () => render());
     els.chart.addEventListener("mousemove", showTooltip);
     els.chart.addEventListener("mouseleave", () => {

@@ -107,6 +107,31 @@ public sealed class SyncService(
         return new { processed, updated, skipped, failed, errors, results = pageResults, syncLog };
     }
 
+    public async Task<object> SyncPageByIdAsync(string pageId, CancellationToken cancellationToken)
+    {
+        var db = await notionClientService.QueryDatabaseAsync(cancellationToken);
+        if (db is null || !db.Value.TryGetProperty("results", out var results))
+        {
+            return new { pageId, updated = false, reason = "database_not_found" };
+        }
+
+        foreach (var page in results.EnumerateArray())
+        {
+            var candidatePageId = page.GetProperty("id").GetString();
+            if (!string.Equals(candidatePageId, pageId, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var result = await SyncPageInternalAsync(page, updateMetadata: false, appendImage: false, cancellationToken);
+            return result is null
+                ? new { pageId, updated = false, reason = "page_without_liga_url" }
+                : new { pageId, updated = true, result };
+        }
+
+        return new { pageId, updated = false, reason = "page_not_found" };
+    }
+
     private async Task<object?> SyncPageInternalAsync(
         JsonElement page,
         bool updateMetadata,
@@ -121,10 +146,18 @@ public sealed class SyncService(
         var card = await scraperService.GetCardAsync(url, cancellationToken);
         if (card is null)
         {
+            var savedSnapshot = await SavePriceHistoryFromNotionPropertiesAsync(pageId, properties, url, cancellationToken);
             var chartPayload = BuildChartUrlPayload(properties, pageId);
             if (chartPayload is null)
             {
-                return null;
+                return savedSnapshot
+                    ? new
+                    {
+                        pageId,
+                        reason = "liga_card_not_found",
+                        savedSnapshot
+                    }
+                    : null;
             }
 
             await notionClientService.UpdatePageAsync(pageId, chartPayload, cancellationToken);
@@ -132,6 +165,7 @@ public sealed class SyncService(
             {
                 pageId,
                 reason = "liga_card_not_found",
+                savedSnapshot,
                 updatedProperties = GetPayloadPropertyNames(chartPayload)
             };
         }
@@ -335,6 +369,36 @@ public sealed class SyncService(
         }, cancellationToken);
     }
 
+    private async Task<bool> SavePriceHistoryFromNotionPropertiesAsync(
+        string pageId,
+        JsonElement properties,
+        string sourceUrl,
+        CancellationToken cancellationToken)
+    {
+        var normalPrice = ParsePrice(ReadNotionPlainText(properties, _options.PriceProperty));
+        var foilPrice = ParsePrice(ReadNotionPlainText(properties, _options.FoilPriceProperty));
+        var reverseFoilPrice = ParsePrice(ReadNotionPlainText(properties, _options.ReverseFoilPriceProperty));
+        if (!normalPrice.HasValue &&
+            !foilPrice.HasValue &&
+            !reverseFoilPrice.HasValue)
+        {
+            return false;
+        }
+
+        return await priceHistoryRepository.SaveAsync(new CardPriceSnapshot
+        {
+            PageId = pageId,
+            CardName = ReadNotionPlainText(properties, _options.CardNameProperty),
+            CardNumber = ReadNotionPlainText(properties, _options.NumberProperty),
+            SourceUrl = sourceUrl,
+            ImageUrl = ReadNotionImageUrl(properties, _options.ImageProperty),
+            NormalPrice = normalPrice,
+            FoilPrice = foilPrice,
+            ReverseFoilPrice = reverseFoilPrice,
+            CapturedAt = DateTimeOffset.UtcNow
+        }, cancellationToken);
+    }
+
     private string GetChartUrl(string pageId)
     {
         var baseUrl = string.IsNullOrWhiteSpace(_appOptions.PublicBaseUrl)
@@ -491,6 +555,49 @@ public sealed class SyncService(
         if (string.IsNullOrWhiteSpace(value)) return null;
         var digits = new string(value.TakeWhile(char.IsDigit).ToArray());
         return decimal.TryParse(digits, out var parsed) ? parsed : null;
+    }
+
+    private static decimal? ParsePrice(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+
+        var match = Regex.Match(value, @"\d+(?:[.,]\d+)?");
+        if (!match.Success) return null;
+
+        var normalized = match.Value.Contains(',', StringComparison.Ordinal)
+            ? match.Value.Replace(".", string.Empty).Replace(',', '.')
+            : match.Value;
+
+        return decimal.TryParse(normalized, NumberStyles.Number, CultureInfo.InvariantCulture, out var parsed)
+            ? parsed
+            : null;
+    }
+
+    private static string? ReadNotionImageUrl(JsonElement properties, string propertyName)
+    {
+        if (!TryGetPropertyByName(properties, propertyName, out var prop)) return null;
+        if (!prop.TryGetProperty("type", out var typeElement)) return null;
+
+        if (typeElement.GetString() == "files" &&
+            prop.TryGetProperty("files", out var files) &&
+            files.ValueKind == JsonValueKind.Array &&
+            files.GetArrayLength() > 0)
+        {
+            var first = files.EnumerateArray().First();
+            if (first.TryGetProperty("external", out var external) &&
+                external.TryGetProperty("url", out var externalUrl))
+            {
+                return externalUrl.GetString();
+            }
+
+            if (first.TryGetProperty("file", out var file) &&
+                file.TryGetProperty("url", out var fileUrl))
+            {
+                return fileUrl.GetString();
+            }
+        }
+
+        return ReadNotionPlainText(properties, propertyName);
     }
 
     private static object Title(string? value) => new

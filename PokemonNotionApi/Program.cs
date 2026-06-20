@@ -73,6 +73,27 @@ app.MapPost("/api/sync/run/search", async (SyncService syncService, Cancellation
     }
 });
 
+app.MapPost("/api/cards/{pageId}/sync", async (
+    string pageId,
+    SyncService syncService,
+    CancellationToken cancellationToken) =>
+{
+    try
+    {
+        var result = await syncService.SyncPageByIdAsync(pageId, cancellationToken);
+        return Results.Ok(result);
+    }
+    catch (NotionApiException ex)
+    {
+        return Results.BadRequest(new
+        {
+            error = "notion_update_failed",
+            notionStatusCode = ex.StatusCode,
+            notionResponse = ex.ResponseBody
+        });
+    }
+});
+
 app.MapGet("/api/cards/{pageId}/prices", async (
     string pageId,
     int? limit,
