@@ -40,14 +40,96 @@ public sealed class LigaPokemonScraperService(HttpClient httpClient, IOptions<Li
         return BuildCardUrl(name, number, printedTotal);
     }
 
+    public async Task<LigaPokemonCardSearchResult?> SearchCardAsync(
+        string name,
+        string number,
+        string printedTotal,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(name) ||
+            string.IsNullOrWhiteSpace(number) ||
+            string.IsNullOrWhiteSpace(printedTotal))
+        {
+            return null;
+        }
+
+        var normalizedNumber = NormalizeCardNumber(number);
+        var normalizedTotal = NormalizeCardNumber(printedTotal);
+        if (string.IsNullOrWhiteSpace(normalizedNumber) || string.IsNullOrWhiteSpace(normalizedTotal))
+        {
+            return null;
+        }
+
+        var query = $"{name.Trim()} ({normalizedNumber}/{normalizedTotal})";
+        var searchUrl = $"https://www.clubedaliga.com.br/api/cardsearch?tcg=2&maxQuantity=8&maintype=1&query={Uri.EscapeDataString(query)}";
+        using var request = new HttpRequestMessage(HttpMethod.Get, searchUrl);
+        request.Headers.UserAgent.ParseAdd(_options.UserAgent);
+        request.Headers.Accept.ParseAdd("application/json,text/plain,*/*");
+        request.Headers.AcceptLanguage.ParseAdd(_options.AcceptLanguage);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            return null;
+        }
+
+        using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+        if (!doc.RootElement.TryGetProperty("data", out var data) ||
+            data.ValueKind != JsonValueKind.Array ||
+            data.GetArrayLength() == 0)
+        {
+            return null;
+        }
+
+        foreach (var item in data.EnumerateArray())
+        {
+            var suggestionName = ReadString(item, "sNomeIdiomaPrincipal") ?? ReadString(item, "sNomeIdiomaSecundario");
+            var (cardName, cardNumber) = ParseNameAndNumber(suggestionName);
+            if (!IsSameCardNumber(cardNumber, normalizedNumber))
+            {
+                continue;
+            }
+
+            var imageUrl = NormalizeUrl(ReadString(item, "sPathImage"));
+            var sourceUrl = BuildCardUrl(cardName ?? name, normalizedNumber, normalizedTotal);
+            if (sourceUrl is null)
+            {
+                continue;
+            }
+
+            return new LigaPokemonCardSearchResult(
+                Query: query,
+                Name: cardName ?? suggestionName ?? name,
+                Number: cardNumber ?? normalizedNumber,
+                PrintedTotal: normalizedTotal,
+                ImageUrl: imageUrl,
+                SourceUrl: sourceUrl,
+                SearchUrl: searchUrl,
+                Key: ReadString(item, "__key"));
+        }
+
+        return null;
+    }
+
     public async Task<CardData?> GetCardAsync(string sourceUrl, CancellationToken cancellationToken)
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, sourceUrl);
         request.Headers.UserAgent.ParseAdd(_options.UserAgent);
+        request.Headers.Accept.ParseAdd("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
+        request.Headers.AcceptLanguage.ParseAdd(_options.AcceptLanguage);
+        request.Headers.Referrer = new Uri(_options.BaseUrl.TrimEnd('/') + "/");
         using var response = await httpClient.SendAsync(request, cancellationToken);
         if (!response.IsSuccessStatusCode) return null;
 
         var html = await response.Content.ReadAsStringAsync(cancellationToken);
+        if (IsCloudflareChallenge(html))
+        {
+            throw new LigaPokemonScraperException(
+                "Liga Pokemon blocked or rejected the request.",
+                (int)response.StatusCode,
+                "Cloudflare or anti-bot page returned instead of card page",
+                sourceUrl,
+                BuildPreview(html));
+        }
 
         var title = ExtractGroup(html, @"<h1[^>]*>\s*(?<value>[^<]+)\s*</h1>")
             ?? ExtractGroup(html, "property=\"og:title\" content=\"(?<value>[^\"]+)\"");
@@ -55,6 +137,22 @@ public sealed class LigaPokemonScraperService(HttpClient httpClient, IOptions<Li
         var prices = ExtractPrices(html);
         var rarity = ExtractByLabel(html, "Raridade");
         var type = ExtractByLabel(html, "Tipo");
+        if (title is null &&
+            image is null &&
+            rarity is null &&
+            type is null &&
+            !prices.Normal.HasValue &&
+            !prices.Foil.HasValue &&
+            !prices.ReverseFoil.HasValue)
+        {
+            throw new LigaPokemonScraperException(
+                "Liga Pokemon returned a page, but no card data could be extracted.",
+                (int)response.StatusCode,
+                "Card page HTML did not match the expected structure",
+                sourceUrl,
+                BuildPreview(html));
+        }
+
         var (name, number) = ParseNameAndNumber(title);
         number ??= ExtractEditionNumber(html);
 
@@ -270,6 +368,37 @@ public sealed class LigaPokemonScraperService(HttpClient httpClient, IOptions<Li
         return value;
     }
 
+    private static string? ReadString(JsonElement item, string propertyName)
+    {
+        return item.TryGetProperty(propertyName, out var value) && value.ValueKind == JsonValueKind.String
+            ? CleanText(value.GetString())
+            : null;
+    }
+
+    private static bool IsSameCardNumber(string? actual, string expected)
+    {
+        if (string.IsNullOrWhiteSpace(actual)) return false;
+        return string.Equals(NormalizeCardNumber(actual), expected, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsCloudflareChallenge(string html)
+    {
+        return html.Contains("<title>Just a moment...</title>", StringComparison.OrdinalIgnoreCase) ||
+            html.Contains("cdn-cgi/challenge-platform", StringComparison.OrdinalIgnoreCase) ||
+            html.Contains("cf-browser-verification", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string BuildPreview(string html)
+    {
+        var preview = CleanText(Regex.Replace(html, "<[^>]+>", " "));
+        if (string.IsNullOrWhiteSpace(preview))
+        {
+            preview = html;
+        }
+
+        return preview.Length <= 500 ? preview : preview[..500];
+    }
+
     private static (string? Name, string? Number) ParseNameAndNumber(string? fullName)
     {
         if (string.IsNullOrWhiteSpace(fullName)) return (null, null);
@@ -298,4 +427,27 @@ public sealed class LigaPokemonScraperService(HttpClient httpClient, IOptions<Li
         return Regex.Replace(value, @"\s+", " ").Trim();
     }
 }
+
+public sealed class LigaPokemonScraperException(
+    string message,
+    int statusCode,
+    string reasonPhrase,
+    string sourceUrl,
+    string responsePreview) : Exception(message)
+{
+    public int StatusCode { get; } = statusCode;
+    public string ReasonPhrase { get; } = reasonPhrase;
+    public string SourceUrl { get; } = sourceUrl;
+    public string ResponsePreview { get; } = responsePreview;
+}
+
+public sealed record LigaPokemonCardSearchResult(
+    string Query,
+    string Name,
+    string Number,
+    string PrintedTotal,
+    string? ImageUrl,
+    string SourceUrl,
+    string SearchUrl,
+    string? Key);
 

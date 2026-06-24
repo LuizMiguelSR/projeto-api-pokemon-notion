@@ -33,56 +33,9 @@ services:
       - Notion__StatusProperty=${NOTION_STATUS_PROPERTY:-Status}
       - Notion__NotStartedStatusValue=${NOTION_NOT_STARTED_STATUS_VALUE:-Não iniciada}
       - Notion__DoneStatusValue=${NOTION_DONE_STATUS_VALUE:-Concluído}
+      - LigaPokemon__UserAgent=${LIGAPOKEMON_USER_AGENT}
     depends_on:
       - mysql
-
-  pokemon-notion-sync:
-    image: curlimages/curl:8.16.0
-    container_name: pokemon-notion-sync
-    restart: unless-stopped
-    depends_on:
-      - pokemon-notion-api
-    environment:
-      - TZ=BRT3
-    command:
-      - sh
-      - -c
-      - |
-        while true; do
-          hour=$$(date +%H)
-          minute=$$(date +%M)
-          second=$$(date +%S)
-          hour=$${hour#0}
-          minute=$${minute#0}
-          second=$${second#0}
-          now_seconds=$$(( $${hour:-0} * 3600 + $${minute:-0} * 60 + $${second:-0} ))
-          next_seconds=7200
-
-          for scheduled_seconds in 7200 28800 50400 72000; do
-            if [ "$$now_seconds" -lt "$$scheduled_seconds" ]; then
-              next_seconds=$$scheduled_seconds
-              break
-            fi
-          done
-
-          if [ "$$now_seconds" -ge 72000 ]; then
-            sleep_seconds=$$((86400 - $$now_seconds + 7200))
-          else
-            sleep_seconds=$$((next_seconds - $$now_seconds))
-          fi
-
-          echo "Next Pokemon Notion sync in $${sleep_seconds}s at $$(date -Iseconds)"
-          sleep "$$sleep_seconds"
-
-          until curl -fsS http://pokemon-notion-api:8090/health >/dev/null; do
-            echo "Pokemon Notion API is not ready at $$(date -Iseconds)"
-            sleep 30
-          done
-
-          echo "Running Pokemon Notion sync at $$(date -Iseconds)"
-          curl -sS --max-time 1800 -X POST http://pokemon-notion-api:8090/api/sync/run
-          echo
-        done
 
   mysql:
     image: mysql:8.4

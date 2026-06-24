@@ -37,7 +37,7 @@ app.MapGet("/health", () => Results.Ok(new
 app.UseDefaultFiles();
 app.UseStaticFiles();
 
-app.MapPost("/api/sync/run", async (SyncService syncService, CancellationToken cancellationToken) =>
+async Task<IResult> RunSyncAsync(SyncService syncService, CancellationToken cancellationToken)
 {
     try
     {
@@ -46,16 +46,27 @@ app.MapPost("/api/sync/run", async (SyncService syncService, CancellationToken c
     }
     catch (NotionApiException ex)
     {
+        var syncLog = await syncService.CreateErrorLogAsync("sync_run", ex, cancellationToken);
         return Results.BadRequest(new
         {
             error = "notion_update_failed",
             notionStatusCode = ex.StatusCode,
-            notionResponse = ex.ResponseBody
+            notionResponse = ex.ResponseBody,
+            syncLog
         });
     }
-});
+    catch (Exception ex)
+    {
+        var syncLog = await syncService.CreateErrorLogAsync("sync_run", ex, cancellationToken);
+        return Results.Problem(
+            title: "Sync failed",
+            detail: ex.Message,
+            statusCode: StatusCodes.Status500InternalServerError,
+            extensions: new Dictionary<string, object?> { ["syncLog"] = syncLog });
+    }
+}
 
-app.MapPost("/api/sync/run/search", async (SyncService syncService, CancellationToken cancellationToken) =>
+async Task<IResult> RunSearchSyncAsync(SyncService syncService, CancellationToken cancellationToken)
 {
     try
     {
@@ -64,19 +75,30 @@ app.MapPost("/api/sync/run/search", async (SyncService syncService, Cancellation
     }
     catch (NotionApiException ex)
     {
+        var syncLog = await syncService.CreateErrorLogAsync("sync_run_search", ex, cancellationToken);
         return Results.BadRequest(new
         {
             error = "notion_update_failed",
             notionStatusCode = ex.StatusCode,
-            notionResponse = ex.ResponseBody
+            notionResponse = ex.ResponseBody,
+            syncLog
         });
     }
-});
+    catch (Exception ex)
+    {
+        var syncLog = await syncService.CreateErrorLogAsync("sync_run_search", ex, cancellationToken);
+        return Results.Problem(
+            title: "Search sync failed",
+            detail: ex.Message,
+            statusCode: StatusCodes.Status500InternalServerError,
+            extensions: new Dictionary<string, object?> { ["syncLog"] = syncLog });
+    }
+}
 
-app.MapPost("/api/cards/{pageId}/sync", async (
+async Task<IResult> RunPageSyncAsync(
     string pageId,
     SyncService syncService,
-    CancellationToken cancellationToken) =>
+    CancellationToken cancellationToken)
 {
     try
     {
@@ -85,14 +107,29 @@ app.MapPost("/api/cards/{pageId}/sync", async (
     }
     catch (NotionApiException ex)
     {
+        var syncLog = await syncService.CreateErrorLogAsync($"card_sync:{pageId}", ex, cancellationToken);
         return Results.BadRequest(new
         {
             error = "notion_update_failed",
             notionStatusCode = ex.StatusCode,
-            notionResponse = ex.ResponseBody
+            notionResponse = ex.ResponseBody,
+            syncLog
         });
     }
-});
+    catch (Exception ex)
+    {
+        var syncLog = await syncService.CreateErrorLogAsync($"card_sync:{pageId}", ex, cancellationToken);
+        return Results.Problem(
+            title: "Card sync failed",
+            detail: ex.Message,
+            statusCode: StatusCodes.Status500InternalServerError,
+            extensions: new Dictionary<string, object?> { ["syncLog"] = syncLog });
+    }
+}
+
+app.MapMethods("/api/sync/run", ["GET", "POST"], RunSyncAsync);
+app.MapMethods("/api/sync/run/search", ["GET", "POST"], RunSearchSyncAsync);
+app.MapMethods("/api/cards/{pageId}/sync", ["GET", "POST"], RunPageSyncAsync);
 
 app.MapGet("/api/cards/{pageId}/prices", async (
     string pageId,

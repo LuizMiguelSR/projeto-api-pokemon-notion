@@ -24,7 +24,10 @@ public sealed class SyncService(
         var db = await notionClientService.QueryDatabaseAsync(cancellationToken);
         if (db is null || !db.Value.TryGetProperty("results", out var results))
         {
-            return new { processed = 0, updated = 0 };
+            var unreadableResponse = new { processed = 0, updated = 0, failed = 1, errors = new[] { new { error = "notion_database_not_found_or_unreadable" } } };
+            var unreadableDetails = JsonSerializer.Serialize(unreadableResponse, new JsonSerializerOptions { WriteIndented = true });
+            var unreadableSyncLog = await TryCreateSyncLogAsync("Erro", unreadableDetails, cancellationToken);
+            return new { unreadableResponse.processed, unreadableResponse.updated, unreadableResponse.failed, unreadableResponse.errors, syncLog = unreadableSyncLog };
         }
 
         var processed = 0;
@@ -45,7 +48,7 @@ public sealed class SyncService(
             catch (Exception ex)
             {
                 failed++;
-                errors.Add(new { pageId, error = ex.Message });
+                errors.Add(BuildError(pageId, ex));
             }
         }
 
@@ -62,7 +65,10 @@ public sealed class SyncService(
         var db = await notionClientService.QueryDatabaseAsync(cancellationToken);
         if (db is null || !db.Value.TryGetProperty("results", out var results))
         {
-            return new { processed = 0, updated = 0 };
+            var unreadableResponse = new { processed = 0, updated = 0, skipped = 0, failed = 1, errors = new[] { new { error = "notion_database_not_found_or_unreadable" } }, results = Array.Empty<object>() };
+            var unreadableDetails = JsonSerializer.Serialize(unreadableResponse, new JsonSerializerOptions { WriteIndented = true });
+            var unreadableSyncLog = await TryCreateSyncLogAsync("Erro", unreadableDetails, cancellationToken);
+            return new { unreadableResponse.processed, unreadableResponse.updated, unreadableResponse.skipped, unreadableResponse.failed, unreadableResponse.errors, unreadableResponse.results, syncLog = unreadableSyncLog };
         }
 
         var processed = 0;
@@ -95,7 +101,7 @@ public sealed class SyncService(
             catch (Exception ex)
             {
                 failed++;
-                errors.Add(new { pageId, error = ex.Message });
+                errors.Add(BuildError(pageId, ex));
             }
         }
 
@@ -130,6 +136,23 @@ public sealed class SyncService(
         }
 
         return new { pageId, updated = false, reason = "page_not_found" };
+    }
+
+    public Task<SyncLogResult> CreateErrorLogAsync(string operation, Exception exception, CancellationToken cancellationToken)
+    {
+        var details = JsonSerializer.Serialize(new
+        {
+            operation,
+            status = "Erro",
+            error = new
+            {
+                type = exception.GetType().Name,
+                message = exception.Message,
+                stackTrace = exception.StackTrace
+            }
+        }, new JsonSerializerOptions { WriteIndented = true });
+
+        return TryCreateSyncLogAsync("Erro", details, cancellationToken);
     }
 
     private async Task<object?> SyncPageInternalAsync(
@@ -213,13 +236,13 @@ public sealed class SyncService(
         }
 
         var pageId = page.GetProperty("id").GetString()!;
-        var sourceUrl = scraperService.GetCardUrlByNameAndPrintedNumber(name, number, printedTotal);
-        if (string.IsNullOrWhiteSpace(sourceUrl))
+        var searchResult = await scraperService.SearchCardAsync(name, number, printedTotal, cancellationToken);
+        if (searchResult is null)
         {
             return new SearchSyncPageResult(
                 Updated: false,
                 Partial: false,
-                Reason: "could_not_build_liga_url",
+                Reason: "cardsearch_not_found",
                 PageId: pageId,
                 SourceUrl: null,
                 SourceName: name,
@@ -227,20 +250,42 @@ public sealed class SyncService(
                 SourcePrintedTotal: printedTotal);
         }
 
-        await notionClientService.UpdatePageAsync(pageId, BuildLigaUrlPayload(sourceUrl, properties, pageId), cancellationToken);
+        var sourceUrl = searchResult.SourceUrl;
+        var searchPayload = BuildSearchResultPayload(searchResult, properties, pageId);
+        await notionClientService.UpdatePageAsync(pageId, searchPayload, cancellationToken);
 
-        var card = await scraperService.GetCardAsync(sourceUrl, cancellationToken);
+        CardData? card;
+        string? partialReason = null;
+        try
+        {
+            card = await scraperService.GetCardAsync(sourceUrl, cancellationToken);
+        }
+        catch (LigaPokemonScraperException ex)
+        {
+            card = null;
+            partialReason = ex.ReasonPhrase;
+        }
+
         if (card is null)
         {
+            if (!string.IsNullOrWhiteSpace(searchResult.ImageUrl))
+            {
+                await notionClientService.AppendImageBlockIfMissingAsync(pageId, searchResult.ImageUrl, cancellationToken);
+            }
+
             return new SearchSyncPageResult(
                 Updated: true,
                 Partial: true,
-                Reason: "liga_card_not_found",
+                Reason: partialReason ?? "liga_card_not_found",
                 PageId: pageId,
                 SourceUrl: sourceUrl,
                 SourceName: name,
                 SourceNumber: number,
-                SourcePrintedTotal: printedTotal);
+                SourcePrintedTotal: printedTotal,
+                CardName: searchResult.Name,
+                CardNumber: searchResult.Number,
+                ImageUrl: searchResult.ImageUrl,
+                UpdatedProperties: GetPayloadPropertyNames(searchPayload));
         }
 
         var updatePayload = BuildUpdatePayload(card, properties, updateMetadata: true, pageId);
@@ -279,6 +324,30 @@ public sealed class SyncService(
 
         var status = ReadNotionPlainText(properties, _options.StatusProperty);
         return string.Equals(status, expectedStatus, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static object BuildError(string? pageId, Exception exception)
+    {
+        if (exception is LigaPokemonScraperException scraperException)
+        {
+            return new
+            {
+                pageId,
+                type = exception.GetType().Name,
+                message = exception.Message,
+                statusCode = scraperException.StatusCode,
+                reasonPhrase = scraperException.ReasonPhrase,
+                sourceUrl = scraperException.SourceUrl,
+                responsePreview = scraperException.ResponsePreview
+            };
+        }
+
+        return new
+        {
+            pageId,
+            type = exception.GetType().Name,
+            message = exception.Message
+        };
     }
 
     private async Task<SyncLogResult> TryCreateSyncLogAsync(string status, string details, CancellationToken cancellationToken)
@@ -336,6 +405,18 @@ public sealed class SyncService(
         var p = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
         AddUrlIfPresent(p, existingProperties, _options.CardUrlProperty, sourceUrl);
         AddUrlIfPresent(p, existingProperties, _options.ChartUrlProperty, GetChartUrl(pageId));
+        return new { properties = p };
+    }
+
+    private object BuildSearchResultPayload(LigaPokemonCardSearchResult searchResult, JsonElement existingProperties, string pageId)
+    {
+        var p = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+        AddTitle(p, existingProperties, _options.CardNameProperty, searchResult.Name);
+        AddTextOrNumberIfPresent(p, existingProperties, _options.NumberProperty, searchResult.Number);
+        AddFilesIfPresent(p, existingProperties, _options.ImageProperty, searchResult.ImageUrl);
+        AddUrlIfPresent(p, existingProperties, _options.CardUrlProperty, searchResult.SourceUrl);
+        AddUrlIfPresent(p, existingProperties, _options.ChartUrlProperty, GetChartUrl(pageId));
+        AddStatusIfPresent(p, existingProperties, _options.StatusProperty, _options.DoneStatusValue);
         return new { properties = p };
     }
 
