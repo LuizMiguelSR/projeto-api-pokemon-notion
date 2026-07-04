@@ -12,6 +12,7 @@ public sealed class NotionClientService(HttpClient httpClient, IOptions<NotionOp
     private static readonly TimeZoneInfo SaoPauloTimeZone = GetSaoPauloTimeZone();
     private readonly NotionOptions _options = options.Value;
     private const string NotionBaseUrl = "https://api.notion.com/v1/";
+    private const int NotionRichTextContentLimit = 2000;
 
     public async Task<JsonElement?> QueryDatabaseAsync(CancellationToken cancellationToken)
     {
@@ -77,6 +78,7 @@ public sealed class NotionClientService(HttpClient httpClient, IOptions<NotionOp
         AddLogProperty(properties, schemaProperties, _options.LogNameProperty, $"Sincronizacao {syncTimestamp:yyyy-MM-dd HH:mm:ss}");
         AddDateProperty(properties, schemaProperties, _options.LogDateProperty, syncTimestamp);
         AddStatusProperty(properties, schemaProperties, _options.LogStatusProperty, status);
+        var logDetails = TruncateForNotionRichText(details);
 
         var payload = new
         {
@@ -91,7 +93,7 @@ public sealed class NotionClientService(HttpClient httpClient, IOptions<NotionOp
                     {
                         rich_text = new[]
                         {
-                            new { type = "text", text = new { content = details } }
+                            new { type = "text", text = new { content = logDetails } }
                         }
                     }
                 }
@@ -108,6 +110,18 @@ public sealed class NotionClientService(HttpClient httpClient, IOptions<NotionOp
         }
 
         return SyncLogResult.Success();
+    }
+
+    private static string TruncateForNotionRichText(string value)
+    {
+        if (value.Length <= NotionRichTextContentLimit)
+        {
+            return value;
+        }
+
+        const string suffix = "\n... log truncado; consulte a resposta da API ou docker logs para detalhes completos.";
+        var maxContentLength = Math.Max(0, NotionRichTextContentLimit - suffix.Length);
+        return value[..maxContentLength] + suffix;
     }
 
     public async Task UpdatePageAsync(string pageId, object payload, CancellationToken cancellationToken)

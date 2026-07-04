@@ -19,7 +19,7 @@ public sealed class SyncService(
     private readonly NotionOptions _options = options.Value;
     private readonly AppOptions _appOptions = appOptions.Value;
 
-    public async Task<object> SyncDatabaseAsync(CancellationToken cancellationToken)
+    public async Task<object> SyncDatabaseAsync(int? limit, CancellationToken cancellationToken)
     {
         var db = await notionClientService.QueryDatabaseAsync(cancellationToken);
         if (db is null || !db.Value.TryGetProperty("results", out var results))
@@ -32,35 +32,76 @@ public sealed class SyncService(
 
         var processed = 0;
         var updated = 0;
+        var savedSnapshots = 0;
         var failed = 0;
         var errors = new List<object>();
+        var pageResults = new List<object>();
+
         foreach (var page in results.EnumerateArray())
         {
+            if (limit.HasValue && processed >= limit.Value)
+            {
+                break;
+            }
+
             processed++;
             var pageId = page.GetProperty("id").GetString();
-            if (string.IsNullOrWhiteSpace(pageId)) continue;
+            if (string.IsNullOrWhiteSpace(pageId))
+            {
+                continue;
+            }
 
             try
             {
                 var result = await SyncPageInternalAsync(page, updateMetadata: false, appendImage: false, cancellationToken);
-                if (result is not null) updated++;
+                if (result?.Updated == true) updated++;
+                if (result?.SavedSnapshot == true) savedSnapshots++;
+                if (result is not null)
+                {
+                    pageResults.Add(result);
+                    LogSyncPageResult(result);
+                    if (result.Failed)
+                    {
+                        failed++;
+                        errors.Add(result);
+                    }
+                }
+                else
+                {
+                    var skipped = new
+                    {
+                        pageId,
+                        updated = false,
+                        reason = "page_without_liga_url"
+                    };
+                    pageResults.Add(skipped);
+                    logger.LogInformation("Sync skipped page {PageId}: page_without_liga_url", pageId);
+                }
             }
             catch (Exception ex)
             {
                 failed++;
-                errors.Add(BuildError(pageId, ex));
+                var error = BuildError(pageId, ex);
+                errors.Add(error);
+                pageResults.Add(error);
+                logger.LogError(ex, "Sync failed for page {PageId}: {Error}", pageId, ex.Message);
             }
         }
 
-        var response = new { processed, updated, failed, errors };
+        var response = new { processed, updated, savedSnapshots, failed, errors, results = pageResults };
         var status = failed == 0 ? "Sucesso" : "Erro";
         var details = JsonSerializer.Serialize(response, new JsonSerializerOptions { WriteIndented = true });
         var syncLog = await TryCreateSyncLogAsync(status, details, cancellationToken);
 
-        return new { processed, updated, failed, errors, syncLog };
+        return new { processed, updated, savedSnapshots, failed, errors, results = pageResults, syncLog };
     }
 
     public async Task<object> SyncDatabaseByLigaSearchAsync(CancellationToken cancellationToken)
+    {
+        return await SyncDatabaseByLigaSearchAsync(null, cancellationToken);
+    }
+
+    public async Task<object> SyncDatabaseByLigaSearchAsync(IProgress<JobProgress>? progress, CancellationToken cancellationToken)
     {
         var db = await notionClientService.QueryDatabaseAsync(cancellationToken);
         if (db is null || !db.Value.TryGetProperty("results", out var results))
@@ -77,16 +118,25 @@ public sealed class SyncService(
         var failed = 0;
         var errors = new List<object>();
         var pageResults = new List<object>();
-        foreach (var page in results.EnumerateArray())
+        var pages = results.EnumerateArray().ToArray();
+        var total = pages.Length;
+        progress?.Report(new JobProgress(0, total, "Iniciando busca."));
+
+        foreach (var page in pages)
         {
             var pageId = page.GetProperty("id").GetString();
-            if (string.IsNullOrWhiteSpace(pageId)) continue;
+            if (string.IsNullOrWhiteSpace(pageId))
+            {
+                progress?.Report(new JobProgress(processed + skipped + failed, total));
+                continue;
+            }
 
             try
             {
                 if (!HasStatus(page, _options.NotStartedStatusValue))
                 {
                     skipped++;
+                    progress?.Report(new JobProgress(processed + skipped + failed, total, $"Processadas {processed + skipped + failed} de {total} cartas."));
                     continue;
                 }
 
@@ -103,6 +153,8 @@ public sealed class SyncService(
                 failed++;
                 errors.Add(BuildError(pageId, ex));
             }
+
+            progress?.Report(new JobProgress(processed + skipped + failed, total, $"Processadas {processed + skipped + failed} de {total} cartas."));
         }
 
         var response = new { processed, updated, skipped, failed, errors, results = pageResults };
@@ -132,30 +184,100 @@ public sealed class SyncService(
             var result = await SyncPageInternalAsync(page, updateMetadata: false, appendImage: false, cancellationToken);
             return result is null
                 ? new { pageId, updated = false, reason = "page_without_liga_url" }
-                : new { pageId, updated = true, result };
+                : new { pageId, updated = result.Updated, failed = result.Failed, result };
         }
 
         return new { pageId, updated = false, reason = "page_not_found" };
     }
 
+    public async Task<object> UpdateChartUrlsAsync(CancellationToken cancellationToken)
+    {
+        return await UpdateChartUrlsAsync(null, cancellationToken);
+    }
+
+    public async Task<object> UpdateChartUrlsAsync(IProgress<JobProgress>? progress, CancellationToken cancellationToken)
+    {
+        var db = await notionClientService.QueryDatabaseAsync(cancellationToken);
+        if (db is null || !db.Value.TryGetProperty("results", out var results))
+        {
+            return new { processed = 0, updated = 0, failed = 1, errors = new[] { new { error = "notion_database_not_found_or_unreadable" } } };
+        }
+
+        var processed = 0;
+        var updated = 0;
+        var failed = 0;
+        var errors = new List<object>();
+        var pages = results.EnumerateArray().ToArray();
+        var total = pages.Length;
+        progress?.Report(new JobProgress(0, total, "Iniciando refresh das URLs."));
+
+        foreach (var page in pages)
+        {
+            var pageId = page.GetProperty("id").GetString();
+            if (string.IsNullOrWhiteSpace(pageId))
+            {
+                progress?.Report(new JobProgress(processed, total));
+                continue;
+            }
+
+            processed++;
+
+            try
+            {
+                var properties = page.GetProperty("properties");
+                var payload = BuildChartUrlPayload(properties, pageId);
+                if (payload is null)
+                {
+                    continue;
+                }
+
+                await notionClientService.UpdatePageAsync(pageId, payload, cancellationToken);
+                updated++;
+            }
+            catch (Exception ex)
+            {
+                failed++;
+                errors.Add(BuildError(pageId, ex));
+            }
+
+            progress?.Report(new JobProgress(processed, total, $"Atualizadas {updated} de {total} páginas."));
+        }
+
+        var response = new { processed, updated, failed, errors };
+        var status = failed == 0 ? "Sucesso" : "Erro";
+        var details = JsonSerializer.Serialize(response, new JsonSerializerOptions { WriteIndented = true });
+        var syncLog = await TryCreateSyncLogAsync(status, details, cancellationToken);
+
+        return new { processed, updated, failed, errors, syncLog };
+    }
+
     public Task<SyncLogResult> CreateErrorLogAsync(string operation, Exception exception, CancellationToken cancellationToken)
     {
+        var error = new Dictionary<string, object?>
+        {
+            ["type"] = exception.GetType().Name,
+            ["message"] = exception.Message
+        };
+        if (exception is LigaPokemonScraperException scraperException)
+        {
+            error["statusCode"] = scraperException.StatusCode;
+            error["reasonPhrase"] = scraperException.ReasonPhrase;
+            error["sourceUrl"] = scraperException.SourceUrl;
+            error["responsePreview"] = scraperException.ResponsePreview;
+        }
+        error["stackTrace"] = exception.StackTrace;
+
         var details = JsonSerializer.Serialize(new
         {
             operation,
             status = "Erro",
-            error = new
-            {
-                type = exception.GetType().Name,
-                message = exception.Message,
-                stackTrace = exception.StackTrace
-            }
+            error
         }, new JsonSerializerOptions { WriteIndented = true });
 
         return TryCreateSyncLogAsync("Erro", details, cancellationToken);
     }
 
-    private async Task<object?> SyncPageInternalAsync(
+    private async Task<SyncPageResult?> SyncPageInternalAsync(
         JsonElement page,
         bool updateMetadata,
         bool appendImage,
@@ -169,49 +291,38 @@ public sealed class SyncService(
         var card = await scraperService.GetCardAsync(url, cancellationToken);
         if (card is null)
         {
-            var savedSnapshot = await SavePriceHistoryFromNotionPropertiesAsync(pageId, properties, url, cancellationToken);
-            var chartPayload = BuildChartUrlPayload(properties, pageId);
-            if (chartPayload is null)
-            {
-                return savedSnapshot
-                    ? new
-                    {
-                        pageId,
-                        reason = "liga_card_not_found",
-                        savedSnapshot
-                    }
-                    : null;
-            }
-
-            await notionClientService.UpdatePageAsync(pageId, chartPayload, cancellationToken);
-            return new
-            {
-                pageId,
-                reason = "liga_card_not_found",
-                savedSnapshot,
-                updatedProperties = GetPayloadPropertyNames(chartPayload)
-            };
+            return new SyncPageResult(
+                Updated: false,
+                PageId: pageId,
+                Failed: true,
+                Reason: "liga_card_not_found",
+                SourceUrl: url,
+                SavedSnapshot: false);
         }
 
         var updatePayload = BuildUpdatePayload(card, properties, updateMetadata, pageId);
-        await SavePriceHistoryAsync(pageId, card, cancellationToken);
+        var savedPriceSnapshot = await SavePriceHistoryAsync(pageId, card, cancellationToken);
         await notionClientService.UpdatePageAsync(pageId, updatePayload, cancellationToken);
         if (appendImage && !string.IsNullOrWhiteSpace(card.ImageUrl))
         {
             await notionClientService.AppendImageBlockIfMissingAsync(pageId, card.ImageUrl, cancellationToken);
         }
 
-        return new
-        {
-            pageId,
-            card.Name,
-            card.Number,
-            card.PriceText,
-            card.FoilPriceText,
-            card.ReverseFoilPriceText,
-            card.ImageUrl,
-            updatedProperties = GetPayloadPropertyNames(updatePayload)
-        };
+        return new SyncPageResult(
+            Updated: card.PriceValue.HasValue || card.FoilPriceValue.HasValue || card.ReverseFoilPriceValue.HasValue,
+            PageId: pageId,
+            SourceUrl: card.SourceUrl,
+            SavedSnapshot: savedPriceSnapshot,
+            CardName: card.Name,
+            CardNumber: card.Number,
+            PriceText: card.PriceText,
+            PriceValue: card.PriceValue,
+            FoilPriceText: card.FoilPriceText,
+            FoilPriceValue: card.FoilPriceValue,
+            ReverseFoilPriceText: card.ReverseFoilPriceText,
+            ReverseFoilPriceValue: card.ReverseFoilPriceValue,
+            ImageUrl: card.ImageUrl,
+            UpdatedProperties: GetPayloadPropertyNames(updatePayload));
     }
 
     private async Task<SearchSyncPageResult?> SyncPageFromLigaSearchInternalAsync(JsonElement page, CancellationToken cancellationToken)
@@ -346,8 +457,30 @@ public sealed class SyncService(
         {
             pageId,
             type = exception.GetType().Name,
-            message = exception.Message
+            message = exception.Message,
+            stackTrace = exception.StackTrace
         };
+    }
+
+    private void LogSyncPageResult(SyncPageResult result)
+    {
+        logger.LogInformation(
+            "Scrap result page={PageId} updated={Updated} failed={Failed} savedSnapshot={SavedSnapshot} url={SourceUrl} card={CardName} number={CardNumber} normal={PriceText}/{PriceValue} foil={FoilPriceText}/{FoilPriceValue} reverse={ReverseFoilPriceText}/{ReverseFoilPriceValue} properties=[{UpdatedProperties}] reason={Reason}",
+            result.PageId,
+            result.Updated,
+            result.Failed,
+            result.SavedSnapshot,
+            result.SourceUrl,
+            result.CardName,
+            result.CardNumber,
+            result.PriceText,
+            result.PriceValue,
+            result.FoilPriceText,
+            result.FoilPriceValue,
+            result.ReverseFoilPriceText,
+            result.ReverseFoilPriceValue,
+            string.Join(",", result.UpdatedProperties ?? []),
+            result.Reason);
     }
 
     private async Task<SyncLogResult> TryCreateSyncLogAsync(string status, string details, CancellationToken cancellationToken)
@@ -427,16 +560,16 @@ public sealed class SyncService(
         return p.Count == 0 ? null : new { properties = p };
     }
 
-    private async Task SavePriceHistoryAsync(string pageId, CardData card, CancellationToken cancellationToken)
+    private async Task<bool> SavePriceHistoryAsync(string pageId, CardData card, CancellationToken cancellationToken)
     {
         if (!card.PriceValue.HasValue &&
             !card.FoilPriceValue.HasValue &&
             !card.ReverseFoilPriceValue.HasValue)
         {
-            return;
+            return false;
         }
 
-        await priceHistoryRepository.SaveAsync(new CardPriceSnapshot
+        return await priceHistoryRepository.SaveAsync(new CardPriceSnapshot
         {
             PageId = pageId,
             CardName = card.Name,
@@ -886,6 +1019,24 @@ public sealed class SyncService(
         string? PriceText = null,
         string? FoilPriceText = null,
         string? ReverseFoilPriceText = null,
+        string? ImageUrl = null,
+        string[]? UpdatedProperties = null);
+
+    private sealed record SyncPageResult(
+        bool Updated,
+        string PageId,
+        bool Failed = false,
+        string? Reason = null,
+        string? SourceUrl = null,
+        bool? SavedSnapshot = null,
+        string? CardName = null,
+        string? CardNumber = null,
+        string? PriceText = null,
+        decimal? PriceValue = null,
+        string? FoilPriceText = null,
+        decimal? FoilPriceValue = null,
+        string? ReverseFoilPriceText = null,
+        decimal? ReverseFoilPriceValue = null,
         string? ImageUrl = null,
         string[]? UpdatedProperties = null);
 

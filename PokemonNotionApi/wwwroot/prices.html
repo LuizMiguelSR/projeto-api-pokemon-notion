@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Preços</title>
+  <link rel="icon" type="image/svg+xml" href="/pokeball.svg?v=20260704-4">
+  <link rel="stylesheet" href="/pokemon-loading.css?v=20260704-4">
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div class="brand">
+        <img class="brand-mark" src="/pokeball.svg" alt="">
+        <div>
+          <strong>Preços</strong>
+          <span>Consultar histórico de uma carta</span>
+        </div>
+      </div>
+      <nav class="nav">
+        <a href="/search">Busca</a>
+        <a href="/refresh">Atualizar URLs</a>
+      </nav>
+    </header>
+
+    <section class="hero">
+      <div class="status prices-status">
+        <span class="pokeball caught"></span>
+        <h1>Buscar preços</h1>
+        <p>Informe o pageId do Notion para carregar todos os preços salvos.</p>
+        <form class="form" id="form">
+          <input id="pageId" name="pageId" autocomplete="off" placeholder="25d33253-4f31-8082-99b6-cf737fd56095">
+          <button type="submit">Buscar</button>
+        </form>
+        <div class="price-summary" id="summary" hidden></div>
+        <div class="table-wrap" id="tableWrap" hidden>
+          <table>
+            <thead>
+              <tr>
+                <th>Data</th>
+                <th>Normal</th>
+                <th>Foil</th>
+                <th>Reverse Foil</th>
+                <th>Carta</th>
+                <th>Número</th>
+              </tr>
+            </thead>
+            <tbody id="rows"></tbody>
+          </table>
+        </div>
+        <pre class="result" id="result" hidden></pre>
+      </div>
+    </section>
+
+    <footer class="page-footer">
+      <span>Pokémon Notion API</span>
+      <span>Sincronização e histórico de preços.</span>
+    </footer>
+  </main>
+
+  <script>
+    const fmt = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
+    const dateFmt = new Intl.DateTimeFormat("pt-BR", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit"
+    });
+    const form = document.getElementById("form");
+    const summary = document.getElementById("summary");
+    const tableWrap = document.getElementById("tableWrap");
+    const rows = document.getElementById("rows");
+    const result = document.getElementById("result");
+
+    function money(value) {
+      return value == null ? "-" : fmt.format(Number(value));
+    }
+
+    form.addEventListener("submit", async event => {
+      event.preventDefault();
+      const pageId = document.getElementById("pageId").value.trim();
+      if (!pageId) return;
+
+      result.hidden = false;
+      result.textContent = "Carregando preços...";
+      summary.hidden = true;
+      tableWrap.hidden = true;
+
+      try {
+        const response = await fetch(`/cards/${encodeURIComponent(pageId)}/prices/data?limit=10000`);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const data = await response.json();
+        const history = data.history || [];
+        const latest = history[history.length - 1];
+
+        summary.hidden = false;
+        summary.innerHTML = latest
+          ? `<strong>${latest.cardName || "Carta Pokémon"}</strong><span>${history.length} registros encontrados.</span>`
+          : "<strong>Nenhum preço encontrado.</strong><span>Sincronize esta carta para gerar histórico.</span>";
+
+        rows.innerHTML = history.slice().reverse().map(item => `
+          <tr>
+            <td>${dateFmt.format(new Date(item.capturedAt))}</td>
+            <td>${money(item.normalPrice)}</td>
+            <td>${money(item.foilPrice)}</td>
+            <td>${money(item.reverseFoilPrice)}</td>
+            <td>${item.cardName || "-"}</td>
+            <td>${item.cardNumber || "-"}</td>
+          </tr>
+        `).join("");
+
+        tableWrap.hidden = history.length === 0;
+        result.hidden = true;
+      } catch (error) {
+        result.textContent = `Não foi possível carregar os preços. ${error.message}`;
+      }
+    });
+  </script>
+</body>
+</html>

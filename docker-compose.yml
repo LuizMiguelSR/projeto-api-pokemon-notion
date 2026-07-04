@@ -12,6 +12,11 @@ services:
       - ASPNETCORE_ENVIRONMENT=Production
       - ASPNETCORE_URLS=http://+:8090
       - App__PublicBaseUrl=${APP_PUBLIC_BASE_URL:-http://localhost:8090}
+      - Authentication__Google__ClientId=${GOOGLE_CLIENT_ID}
+      - Authentication__Google__ClientSecret=${GOOGLE_CLIENT_SECRET}
+      - Authentication__AllowedEmails__0=${GOOGLE_ALLOWED_EMAIL}
+      - RateLimiting__Public__PermitLimit=${PUBLIC_RATE_LIMIT_PERMIT:-60}
+      - RateLimiting__Public__WindowSeconds=${PUBLIC_RATE_LIMIT_WINDOW_SECONDS:-60}
       - Database__ConnectionString=Server=mysql;Port=3306;Database=${MYSQL_DATABASE:-pokemon};User=${MYSQL_USER:-pokemon};Password=${MYSQL_PASSWORD:-pokemon};TreatTinyAsBoolean=false
       - Notion__Token=${NOTION_TOKEN}
       - Notion__DatabaseId=${NOTION_DATABASE_ID}
@@ -34,6 +39,10 @@ services:
       - Notion__NotStartedStatusValue=${NOTION_NOT_STARTED_STATUS_VALUE:-Não iniciada}
       - Notion__DoneStatusValue=${NOTION_DONE_STATUS_VALUE:-Concluído}
       - LigaPokemon__UserAgent=${LIGAPOKEMON_USER_AGENT}
+      - LigaPokemon__Cookie=${LIGAPOKEMON_COOKIE:-}
+      - LigaPokemon__UsePuppeteerFallback=${LIGAPOKEMON_USE_PUPPETEER_FALLBACK:-true}
+      - LigaPokemon__PuppeteerTimeoutMs=${LIGAPOKEMON_PUPPETEER_TIMEOUT_MS:-15000}
+      - LigaPokemon__PuppeteerHeadless=${LIGAPOKEMON_PUPPETEER_HEADLESS:-true}
     depends_on:
       - mysql
 

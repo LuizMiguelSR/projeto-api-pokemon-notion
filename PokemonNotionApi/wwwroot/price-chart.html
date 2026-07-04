@@ -512,7 +512,7 @@
 
     async function load() {
       els.message.textContent = "Carregando histórico...";
-      const response = await fetch(`/api/cards/${encodeURIComponent(pageId)}/prices?limit=500`);
+      const response = await fetch(`/cards/${encodeURIComponent(pageId)}/prices/data?limit=500`);
       if (!response.ok) throw new Error("Não foi possível carregar o histórico.");
       const data = await response.json();
       fullHistory = (data.history || []).filter(item => item && item.capturedAt);
@@ -554,6 +554,7 @@
       }
 
       els.title.textContent = latest.cardName || "Carta Pokémon";
+      document.title = latest.cardName ? `Preço - ${latest.cardName}` : "Preço - Carta Pokémon";
       els.meta.textContent = latest.cardNumber
         ? `Número ${latest.cardNumber} - atualizado em ${new Date(latest.capturedAt).toLocaleString("pt-BR")}`
         : `Atualizado em ${new Date(latest.capturedAt).toLocaleString("pt-BR")}`;

@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Busca de Cartas</title>
+  <link rel="icon" type="image/svg+xml" href="/pokeball.svg?v=20260704-4">
+  <link rel="stylesheet" href="/pokemon-loading.css?v=20260704-4">
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div class="brand">
+        <img class="brand-mark" src="/pokeball.svg" alt="">
+        <div>
+          <strong>Busca de Cartas</strong>
+          <span>Busca de cartas pendentes</span>
+        </div>
+      </div>
+      <nav class="nav">
+        <a href="/refresh">Atualizar URLs</a>
+        <a href="/prices">Preços</a>
+      </nav>
+    </header>
+
+    <section class="hero">
+      <div class="status">
+        <span class="pokeball"></span>
+        <h1 id="title">Preparando busca</h1>
+        <p id="message">Buscando cartas não iniciadas e atualizando o Notion.</p>
+        <div class="progress" id="progress" hidden><span id="progressBar"></span></div>
+        <p class="progress-label" id="progressLabel" hidden>0%</p>
+        <button id="start" type="button">Iniciar busca</button>
+        <pre class="result" id="result" hidden></pre>
+      </div>
+    </section>
+
+    <footer class="page-footer">
+      <span>Pokémon Notion API</span>
+      <span>Sincronização e histórico de preços.</span>
+    </footer>
+  </main>
+
+  <script src="/job-page.js?v=20260704-4"></script>
+  <script>
+    setupJobPage({
+      startEndpoint: "/api/jobs/sync-search",
+      title: "Executando busca",
+      doneTitle: "Gotcha!!!",
+      errorTitle: "A busca falhou."
+    });
+  </script>
+</body>
+</html>

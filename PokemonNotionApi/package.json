@@ -1,0 +1,9 @@
+{
+  "name": "pokemon-notion-api-tools",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Node tools used by PokemonNotionApi.",
+  "dependencies": {
+    "puppeteer": "^24.11.2"
+  }
+}
