@@ -4,22 +4,22 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Histórico de Preços</title>
-  <link rel="icon" type="image/svg+xml" href="https://upload.wikimedia.org/wikipedia/commons/5/53/Pok%C3%A9_Ball_icon.svg">
+  <link rel="icon" type="image/svg+xml" href="/pokeball.svg?v=20260704-4">
   <style>
     :root {
       color-scheme: dark;
-      --bg: #090d14;
-      --panel: #111827;
-      --panel-2: #0f1724;
-      --ink: #eef4ff;
-      --muted: #91a0b8;
-      --soft: #1c2738;
-      --line: #263449;
-      --accent: #14c6c9;
+      --bg: #191919;
+      --panel: #252525;
+      --panel-2: #202020;
+      --ink: #f1f1ef;
+      --muted: #b7b7b3;
+      --soft: #2f2f2f;
+      --line: #373737;
+      --accent: #373737;
       --normal: #ff5757;
       --foil: #f4b740;
       --reverse: #42d792;
-      --shadow: 0 22px 60px rgba(0, 0, 0, .34);
+      --shadow: none;
     }
 
     * { box-sizing: border-box; }
@@ -29,9 +29,7 @@
       min-height: 100vh;
       font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       color: var(--ink);
-      background:
-        radial-gradient(circle at top left, rgba(20, 198, 201, .15), transparent 32rem),
-        linear-gradient(180deg, #0d1420, var(--bg));
+      background: var(--bg);
     }
 
     .shell {
@@ -114,7 +112,7 @@
     .card, .chart-panel, .table-panel {
       border: 1px solid var(--line);
       border-radius: 8px;
-      background: rgba(17, 24, 39, .92);
+      background: var(--panel);
       box-shadow: var(--shadow);
     }
 
@@ -129,7 +127,7 @@
       place-items: center;
       min-height: 360px;
       padding: 18px;
-      background: linear-gradient(180deg, rgba(255, 255, 255, .05), rgba(255, 255, 255, .01));
+      background: var(--panel-2);
     }
 
     .cover img {
@@ -184,12 +182,12 @@
     .periods button {
       border-color: var(--accent);
       background: transparent;
-      color: #dffcff;
+      color: var(--ink);
     }
 
     .periods button.active {
       background: var(--accent);
-      color: #041014;
+      color: #fff;
     }
 
     .chart-panel {
@@ -250,7 +248,7 @@
       height: 390px;
       border: 1px solid var(--line);
       border-radius: 8px;
-      background: #0b111b;
+      background: #161616;
       overflow: hidden;
     }
 
@@ -262,7 +260,7 @@
       padding: 10px 12px;
       border: 1px solid var(--line);
       border-radius: 8px;
-      background: rgba(8, 12, 20, .96);
+      background: rgba(25, 25, 25, .96);
       box-shadow: 0 14px 34px rgba(0, 0, 0, .42);
       color: var(--ink);
       font-size: 13px;
@@ -346,8 +344,8 @@
     }
 
     th {
-      color: #d7e3f4;
-      background: #172233;
+      color: var(--ink);
+      background: #252525;
       font-size: 12px;
       text-transform: uppercase;
     }
@@ -387,14 +385,14 @@
   <main class="shell">
     <header class="topbar">
       <div class="brand">
-        <img src="/pokemon-tracker.gif" alt="" onerror="this.onerror=null;this.src='https://upload.wikimedia.org/wikipedia/commons/5/53/Pok%C3%A9_Ball_icon.svg';">
+        <img src="/pokeball.svg?v=20260704-4" alt="">
         <div>
           <strong>Pokémon Price Tracker</strong>
           <span>Histórico de preços da coleção</span>
         </div>
       </div>
       <div class="actions">
-        <button id="refresh" type="button">Atualizar</button>
+        <button id="refresh" type="button" hidden>Atualizar</button>
         <a id="source" class="button" href="#" target="_blank" rel="noreferrer">Liga Pokémon</a>
       </div>
     </header>
@@ -517,6 +515,15 @@
       const data = await response.json();
       fullHistory = (data.history || []).filter(item => item && item.capturedAt);
       render();
+    }
+
+    async function showRefreshWhenAuthorized() {
+      try {
+        const response = await fetch("/auth/me", { headers: { Accept: "application/json" } });
+        els.refresh.hidden = !response.ok;
+      } catch {
+        els.refresh.hidden = true;
+      }
     }
 
     async function syncAndLoad() {
@@ -784,6 +791,7 @@
       els.message.textContent = error.message;
     }
 
+    showRefreshWhenAuthorized();
     load().catch(showError);
   </script>
 </body>
