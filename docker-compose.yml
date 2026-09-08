@@ -1,9 +1,6 @@
 services:
   pokemon-notion-api:
-    restart: unless-stopped
-    build:
-      context: ./PokemonNotionApi
-      dockerfile: Dockerfile
+    image: ghcr.io/luizmiguelsr/projeto-api-pokemon-notion:latest
     container_name: pokemon-notion-api
     ports:
       - "8090:8090"

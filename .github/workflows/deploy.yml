@@ -1,0 +1,62 @@
+name: Build e Deploy Pokemon API
+
+on:
+  push:
+    branches:
+      - master
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE_NAME: ghcr.io/luizmiguelsr/projeto-api-pokemon-notion
+
+jobs:
+  build:
+    name: Build e Push
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Login no GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configurar Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build e publicar imagem
+        uses: docker/build-push-action@v6
+        with:
+          context: ./PokemonNotionApi
+          file: ./PokemonNotionApi/Dockerfile
+          push: true
+          tags: |
+            ${{ env.IMAGE_NAME }}:latest
+            ${{ env.IMAGE_NAME }}:${{ github.sha }}
+
+  deploy:
+    name: Deploy ARETA
+    needs: build
+    runs-on: self-hosted
+
+    steps:
+      - name: Login no GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Atualizar Pokemon API
+        working-directory: /mnt/dados1/Estudos/Repositorios/projeto-api-pokemon-notion
+        run: |
+          docker compose pull pokemon-notion-api
+          docker compose up -d --no-deps pokemon-notion-api
+          docker compose ps pokemon-notion-api
