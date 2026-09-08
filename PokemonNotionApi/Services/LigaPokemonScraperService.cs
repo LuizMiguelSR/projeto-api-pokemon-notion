@@ -1,8 +1,10 @@
 ﻿using System.Globalization;
 using System.Net;
-using System.Diagnostics;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using AngleSharp.Dom;
+using AngleSharp.Html.Dom;
+using AngleSharp.Html.Parser;
 using PokemonNotionApi.Models;
 using PokemonNotionApi.Options;
 using Microsoft.Extensions.Options;
@@ -117,19 +119,6 @@ public sealed class LigaPokemonScraperService(
 
     public async Task<CardData?> GetCardAsync(string sourceUrl, CancellationToken cancellationToken)
     {
-        var fetchedWithPuppeteer = false;
-
-        async Task<string?> FetchWithPuppeteerOnceAsync()
-        {
-            if (fetchedWithPuppeteer)
-            {
-                return null;
-            }
-
-            fetchedWithPuppeteer = true;
-            return await TryFetchHtmlWithPuppeteerAsync(sourceUrl, cancellationToken);
-        }
-
         using var request = new HttpRequestMessage(HttpMethod.Get, sourceUrl);
         request.Headers.UserAgent.ParseAdd(_options.UserAgent);
         request.Headers.Accept.ParseAdd("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
@@ -148,24 +137,16 @@ public sealed class LigaPokemonScraperService(
                 response.ReasonPhrase,
                 BuildPreview(html));
 
-            var puppeteerHtml = await FetchWithPuppeteerOnceAsync();
-            if (string.IsNullOrWhiteSpace(puppeteerHtml) || IsCloudflareChallenge(puppeteerHtml))
-            {
-                var preview = BuildPreview(string.IsNullOrWhiteSpace(puppeteerHtml) ? html : puppeteerHtml);
-                var isBlocked = IsCloudflareChallenge(string.IsNullOrWhiteSpace(puppeteerHtml) ? html : puppeteerHtml);
-                throw new LigaPokemonScraperException(
-                    isBlocked
-                        ? "Liga Pokemon blocked or rejected the request."
-                        : "Liga Pokemon returned a non-success response.",
-                    (int)response.StatusCode,
-                    isBlocked
-                        ? "Cloudflare or anti-bot page returned instead of card page"
-                        : response.ReasonPhrase ?? "HTTP request failed",
-                    sourceUrl,
-                    preview);
-            }
-
-            html = puppeteerHtml;
+            throw new LigaPokemonScraperException(
+                IsCloudflareChallenge(html)
+                    ? "Liga Pokemon blocked or rejected the request."
+                    : "Liga Pokemon returned a non-success response.",
+                (int)response.StatusCode,
+                IsCloudflareChallenge(html)
+                    ? "Cloudflare or anti-bot page returned instead of card page"
+                    : response.ReasonPhrase ?? "HTTP request failed",
+                sourceUrl,
+                BuildPreview(html));
         }
 
         if (IsCloudflareChallenge(html))
@@ -176,38 +157,20 @@ public sealed class LigaPokemonScraperService(
                 (int)response.StatusCode,
                 BuildPreview(html));
 
-            html = await FetchWithPuppeteerOnceAsync() ?? html;
-            if (IsCloudflareChallenge(html))
-            {
-                throw new LigaPokemonScraperException(
-                    "Liga Pokemon blocked or rejected the request.",
-                    (int)response.StatusCode,
-                    "Cloudflare or anti-bot page returned instead of card page",
-                    sourceUrl,
-                    BuildPreview(html));
-            }
+            throw new LigaPokemonScraperException(
+                "Liga Pokemon blocked or rejected the request.",
+                (int)response.StatusCode,
+                "Cloudflare or anti-bot page returned instead of card page",
+                sourceUrl,
+                BuildPreview(html));
         }
 
-        var title = ExtractGroup(html, @"<h1[^>]*>\s*(?<value>[^<]+)\s*</h1>")
-            ?? ExtractGroup(html, "property=\"og:title\" content=\"(?<value>[^\"]+)\"");
-        var image = ExtractCardImage(html) ?? ExtractGroup(html, "property=\"og:image\" content=\"(?<value>[^\"]+)\"");
-        var prices = ExtractPrices(html);
-        var rarity = ExtractByLabel(html, "Raridade");
-        var type = ExtractByLabel(html, "Tipo");
-        if (!HasAnyPrice(prices))
-        {
-            var puppeteerHtml = await FetchWithPuppeteerOnceAsync();
-            if (!string.IsNullOrWhiteSpace(puppeteerHtml) && !IsCloudflareChallenge(puppeteerHtml))
-            {
-                html = puppeteerHtml;
-                title = ExtractGroup(html, @"<h1[^>]*>\s*(?<value>[^<]+)\s*</h1>")
-                    ?? ExtractGroup(html, "property=\"og:title\" content=\"(?<value>[^\"]+)\"");
-                image = ExtractCardImage(html) ?? ExtractGroup(html, "property=\"og:image\" content=\"(?<value>[^\"]+)\"");
-                prices = ExtractPrices(html);
-                rarity = ExtractByLabel(html, "Raridade");
-                type = ExtractByLabel(html, "Tipo");
-            }
-        }
+        var document = await ParseHtmlAsync(html, cancellationToken);
+        var title = ExtractTitle(document);
+        var image = ExtractCardImage(document) ?? ExtractMetaContent(document, "og:image");
+        var prices = ExtractPrices(document);
+        var rarity = ExtractByLabel(document, "Raridade");
+        var type = ExtractByLabel(document, "Tipo");
 
         if (!HasAnyPrice(prices))
         {
@@ -226,7 +189,7 @@ public sealed class LigaPokemonScraperService(
         }
 
         var (name, number) = ParseNameAndNumber(title);
-        number ??= ExtractEditionNumber(html);
+        number ??= ExtractEditionNumber(document);
         logger.LogInformation(
             "Liga Pokemon prices extracted url={SourceUrl} name={Name} number={Number} normal={Normal} foil={Foil} reverse={Reverse}",
             sourceUrl,
@@ -315,14 +278,21 @@ public sealed class LigaPokemonScraperService(
         return prices.Normal.HasValue || prices.Foil.HasValue || prices.ReverseFoil.HasValue;
     }
 
-    private static (decimal? Normal, decimal? Foil, decimal? ReverseFoil) ExtractPrices(string html)
+    private static async Task<IHtmlDocument> ParseHtmlAsync(string html, CancellationToken cancellationToken)
     {
-        var runtimePrices = ExtractPricesFromRuntimeData(html);
+        var parser = new HtmlParser();
+        return await parser.ParseDocumentAsync(html, cancellationToken);
+    }
+
+    private static (decimal? Normal, decimal? Foil, decimal? ReverseFoil) ExtractPrices(IHtmlDocument document)
+    {
+        var runtimePrices = ExtractPricesFromRuntimeData(document);
         if (HasAnyPrice(runtimePrices))
         {
             return runtimePrices;
         }
 
+        var html = document.DocumentElement.OuterHtml;
         var match = Regex.Match(html, @"var\s+cards_editions\s*=\s*(?<value>\[[\s\S]*?\]);", RegexOptions.IgnoreCase);
         if (!match.Success) return (null, null, null);
 
@@ -337,20 +307,17 @@ public sealed class LigaPokemonScraperService(
         }
     }
 
-    private static (decimal? Normal, decimal? Foil, decimal? ReverseFoil) ExtractPricesFromRuntimeData(string html)
+    private static (decimal? Normal, decimal? Foil, decimal? ReverseFoil) ExtractPricesFromRuntimeData(IHtmlDocument document)
     {
-        var match = Regex.Match(
-            html,
-            @"<script[^>]*id=[""']liga-pokemon-runtime-data[""'][^>]*>(?<value>[\s\S]*?)</script>",
-            RegexOptions.IgnoreCase);
-        if (!match.Success)
+        var script = document.QuerySelector("#liga-pokemon-runtime-data");
+        if (script?.TextContent is not { Length: > 0 } scriptText)
         {
             return (null, null, null);
         }
 
         try
         {
-            var json = WebUtility.HtmlDecode(match.Groups["value"].Value);
+            var json = WebUtility.HtmlDecode(scriptText);
             using var doc = JsonDocument.Parse(json);
             if (doc.RootElement.TryGetProperty("cards_editions", out var cardsEditions) &&
                 cardsEditions.ValueKind == JsonValueKind.Array)
@@ -453,8 +420,9 @@ public sealed class LigaPokemonScraperService(
         };
     }
 
-    private static string? ExtractEditionNumber(string html)
+    private static string? ExtractEditionNumber(IHtmlDocument document)
     {
+        var html = document.DocumentElement.OuterHtml;
         var match = Regex.Match(html, @"var\s+cards_editions\s*=\s*(?<value>\[[\s\S]*?\]);", RegexOptions.IgnoreCase);
         if (!match.Success) return null;
 
@@ -481,61 +449,115 @@ public sealed class LigaPokemonScraperService(
         return $"R$ {value.ToString("N2", new CultureInfo("pt-BR"))}";
     }
 
-    private static string? ExtractByLabel(string html, string label)
+    private static string? ExtractTitle(IHtmlDocument document)
     {
-        var pattern = $"{Regex.Escape(label)}[\\s\\S]*?<div[^>]*>\\s*(?<value>[^<]+)\\s*</div>";
-        return CleanText(ExtractGroup(html, pattern));
+        return CleanText(document.QuerySelector("h1")?.TextContent)
+            ?? ExtractMetaContent(document, "og:title");
     }
 
-    private static string? ExtractCardImage(string html)
+    private static string? ExtractMetaContent(IHtmlDocument document, string property)
     {
-        var patterns = new[]
-        {
-            @"(?:src|data-src)=[""'](?<value>[^""']*repositorio\.sbrauble\.com/arquivos/in/pokemon[^""']+\.(?:jpg|jpeg|png|webp))[""']",
-            @"url\((?<value>[^)]*repositorio\.sbrauble\.com/arquivos/in/pokemon[^)]+\.(?:jpg|jpeg|png|webp))\)"
-        };
-
-        foreach (var pattern in patterns)
-        {
-            var match = Regex.Match(html, pattern, RegexOptions.IgnoreCase);
-            if (!match.Success) continue;
-
-            var imageUrl = WebUtility.HtmlDecode(match.Groups["value"].Value.Trim().Trim('\'', '"'));
-            return NormalizeUrl(imageUrl);
-        }
-
-        return null;
+        var selector = $"meta[property='{property}'],meta[name='{property}']";
+        return NormalizeUrl(CleanText(document.QuerySelector(selector)?.GetAttribute("content")));
     }
 
-    private static string? ExtractGroup(string text, string pattern)
+    private static string? ExtractByLabel(IHtmlDocument document, string label)
     {
-        var match = Regex.Match(text, pattern, RegexOptions.IgnoreCase);
-        return match.Success ? NormalizeUrl(WebUtility.HtmlDecode(match.Groups["value"].Value.Trim())) : null;
-    }
-
-    private string? ExtractFirstCardUrl(string html)
-    {
-        var patterns = new[]
+        foreach (var element in document.All)
         {
-            @"href=[""'](?<value>[^""']*view=cards%2Fcard[^""']+)[""']",
-            @"href=[""'](?<value>[^""']*view=cards/card[^""']+)[""']"
-        };
-
-        foreach (var pattern in patterns)
-        {
-            var match = Regex.Match(html, pattern, RegexOptions.IgnoreCase);
-            if (!match.Success) continue;
-
-            var href = WebUtility.HtmlDecode(match.Groups["value"].Value);
-            if (href.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+            if (!string.Equals(CleanText(element.TextContent), label, StringComparison.OrdinalIgnoreCase))
             {
-                return href;
+                continue;
             }
 
-            return $"{_options.BaseUrl.TrimEnd('/')}/{href.TrimStart('/')}";
+            var value = FindNextTextValue(element);
+            if (!string.IsNullOrWhiteSpace(value))
+            {
+                return value;
+            }
         }
 
         return null;
+    }
+
+    private static string? FindNextTextValue(IElement element)
+    {
+        for (var sibling = element.NextElementSibling; sibling is not null; sibling = sibling.NextElementSibling)
+        {
+            var text = CleanText(sibling.TextContent);
+            if (!string.IsNullOrWhiteSpace(text))
+            {
+                return text;
+            }
+        }
+
+        var parent = element.ParentElement;
+        if (parent is null)
+        {
+            return null;
+        }
+
+        for (var sibling = parent.NextElementSibling; sibling is not null; sibling = sibling.NextElementSibling)
+        {
+            var text = CleanText(sibling.TextContent);
+            if (!string.IsNullOrWhiteSpace(text))
+            {
+                return text;
+            }
+        }
+
+        return null;
+    }
+
+    private static string? ExtractCardImage(IHtmlDocument document)
+    {
+        var attributes = new[] { "src", "data-src", "href", "data-bg" };
+        foreach (var element in document.All)
+        {
+            foreach (var attribute in attributes)
+            {
+                var imageUrl = NormalizeCardImageUrl(element.GetAttribute(attribute));
+                if (!string.IsNullOrWhiteSpace(imageUrl))
+                {
+                    return imageUrl;
+                }
+            }
+
+            var styleUrl = ExtractCardImageFromStyle(element.GetAttribute("style"));
+            if (!string.IsNullOrWhiteSpace(styleUrl))
+            {
+                return styleUrl;
+            }
+        }
+
+        return null;
+    }
+
+    private static string? ExtractCardImageFromStyle(string? style)
+    {
+        if (string.IsNullOrWhiteSpace(style))
+        {
+            return null;
+        }
+
+        var match = Regex.Match(style, @"url\((?<value>[^)]+)\)", RegexOptions.IgnoreCase);
+        return match.Success
+            ? NormalizeCardImageUrl(match.Groups["value"].Value.Trim().Trim('\'', '"'))
+            : null;
+    }
+
+    private static string? NormalizeCardImageUrl(string? value)
+    {
+        var imageUrl = NormalizeUrl(CleanText(WebUtility.HtmlDecode(value)));
+        if (string.IsNullOrWhiteSpace(imageUrl))
+        {
+            return null;
+        }
+
+        return imageUrl.Contains("repositorio.sbrauble.com/arquivos/in/pokemon", StringComparison.OrdinalIgnoreCase) &&
+            Regex.IsMatch(imageUrl, @"\.(?:jpg|jpeg|png|webp)(?:\?|$)", RegexOptions.IgnoreCase)
+            ? imageUrl
+            : null;
     }
 
     private static string? NormalizeUrl(string? value)
@@ -573,126 +595,12 @@ public sealed class LigaPokemonScraperService(
             html.Contains("Enable JavaScript and cookies to continue", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static bool IsInteractiveCloudflareChallenge(string html)
-    {
-        return html.Contains("cf-turnstile-response", StringComparison.OrdinalIgnoreCase) ||
-            html.Contains("turnstile", StringComparison.OrdinalIgnoreCase) ||
-            html.Contains("Executando verificação de segurança", StringComparison.OrdinalIgnoreCase) ||
-            html.Contains("verifica se você não é um bot", StringComparison.OrdinalIgnoreCase);
-    }
-
     private void AddCookieHeader(HttpRequestMessage request)
     {
         if (!string.IsNullOrWhiteSpace(_options.Cookie))
         {
             request.Headers.TryAddWithoutValidation("Cookie", _options.Cookie);
         }
-    }
-
-    private async Task<string?> TryFetchHtmlWithPuppeteerAsync(string sourceUrl, CancellationToken cancellationToken)
-    {
-        if (!_options.UsePuppeteerFallback)
-        {
-            return null;
-        }
-
-        var scriptPath = ResolvePuppeteerScriptPath();
-        if (!File.Exists(scriptPath))
-        {
-            throw new LigaPokemonScraperException(
-                "Liga Pokemon Puppeteer fallback is enabled, but the script was not found.",
-                0,
-                $"Missing Puppeteer script: {scriptPath}",
-                sourceUrl,
-                string.Empty);
-        }
-
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeout.CancelAfter(TimeSpan.FromMilliseconds(Math.Max(_options.PuppeteerTimeoutMs + 5000, 10000)));
-
-        var startInfo = new ProcessStartInfo
-        {
-            FileName = "node",
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true
-        };
-        startInfo.ArgumentList.Add(scriptPath);
-        startInfo.ArgumentList.Add(sourceUrl);
-        startInfo.ArgumentList.Add(_options.UserAgent);
-        startInfo.ArgumentList.Add(_options.AcceptLanguage);
-        startInfo.ArgumentList.Add(_options.PuppeteerTimeoutMs.ToString(CultureInfo.InvariantCulture));
-        startInfo.ArgumentList.Add(_options.PuppeteerHeadless ? "true" : "false");
-        startInfo.ArgumentList.Add(_options.Cookie ?? string.Empty);
-
-        using var process = Process.Start(startInfo)
-            ?? throw new InvalidOperationException("Could not start Node.js process for Puppeteer fallback.");
-
-        string html;
-        string stderr;
-        try
-        {
-            var outputTask = process.StandardOutput.ReadToEndAsync(timeout.Token);
-            var errorTask = process.StandardError.ReadToEndAsync(timeout.Token);
-            await process.WaitForExitAsync(timeout.Token);
-
-            html = await outputTask;
-            stderr = await errorTask;
-        }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-        {
-            TryKillProcessTree(process);
-            throw new LigaPokemonScraperException(
-                "Liga Pokemon Puppeteer fallback timed out.",
-                0,
-                $"Puppeteer timed out after {_options.PuppeteerTimeoutMs}ms",
-                sourceUrl,
-                string.Empty);
-        }
-
-        if (process.ExitCode != 0)
-        {
-            throw new LigaPokemonScraperException(
-                "Liga Pokemon Puppeteer fallback failed.",
-                0,
-                CleanText(stderr) ?? $"Node process exited with code {process.ExitCode}",
-                sourceUrl,
-                BuildPreview(html));
-        }
-
-        return string.IsNullOrWhiteSpace(html) ? null : html;
-    }
-
-    private static void TryKillProcessTree(Process process)
-    {
-        try
-        {
-            if (!process.HasExited)
-            {
-                process.Kill(entireProcessTree: true);
-            }
-        }
-        catch
-        {
-            // Best effort cleanup after a Puppeteer timeout.
-        }
-    }
-
-    private string ResolvePuppeteerScriptPath()
-    {
-        if (Path.IsPathRooted(_options.PuppeteerScriptPath))
-        {
-            return _options.PuppeteerScriptPath;
-        }
-
-        var workingDirectoryPath = Path.GetFullPath(Path.Combine(Environment.CurrentDirectory, _options.PuppeteerScriptPath));
-        if (File.Exists(workingDirectoryPath))
-        {
-            return workingDirectoryPath;
-        }
-
-        return Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, _options.PuppeteerScriptPath));
     }
 
     private static string BuildPreview(string html)
