@@ -15,6 +15,7 @@ builder.Services.Configure<NotionOptions>(builder.Configuration.GetSection(Notio
 builder.Services.Configure<LigaPokemonOptions>(builder.Configuration.GetSection(LigaPokemonOptions.SectionName));
 builder.Services.AddHttpClient<NotionClientService>();
 builder.Services.AddHttpClient<LigaPokemonScraperService>();
+builder.Services.AddTransient<ScraplingPageFetcher>();
 builder.Services.AddSingleton<CardPriceHistoryRepository>();
 builder.Services.AddSingleton<BackgroundJobService>();
 builder.Services.AddScoped<CardPriceChartService>();
