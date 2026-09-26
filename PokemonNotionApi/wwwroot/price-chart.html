@@ -23,6 +23,7 @@
     }
 
     * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
 
     body {
       margin: 0;
@@ -393,7 +394,7 @@
       </div>
       <div class="actions">
         <button id="refresh" type="button" hidden>Atualizar</button>
-        <a id="login" hidden>Entrar para atualizar</a>
+        <a id="login" class="button" hidden>Entrar para atualizar</a>
         <a id="source" class="button" href="#" target="_blank" rel="noreferrer">Liga Pokémon</a>
       </div>
     </header>
