@@ -124,6 +124,27 @@ var app = builder.Build();
 await app.Services.GetRequiredService<CardPriceHistoryRepository>().InitializeAsync(CancellationToken.None);
 
 app.UseForwardedHeaders();
+
+// TLS may terminate before the last proxy. Use the configured public origin
+// consistently for OAuth challenges and callbacks, including correlation cookies.
+var publicBaseUrl = app.Configuration["App:PublicBaseUrl"];
+Uri? publicOrigin = null;
+if (!string.IsNullOrWhiteSpace(publicBaseUrl))
+{
+    if (!Uri.TryCreate(publicBaseUrl, UriKind.Absolute, out publicOrigin) ||
+        (publicOrigin.Scheme != Uri.UriSchemeHttps && publicOrigin.Scheme != Uri.UriSchemeHttp))
+        throw new InvalidOperationException("App:PublicBaseUrl must be an absolute HTTP or HTTPS URL.");
+}
+app.Use(async (context, next) =>
+{
+    if (publicOrigin is not null &&
+        (context.Request.Path.StartsWithSegments("/auth") || context.Request.Path == "/signin-google"))
+    {
+        context.Request.Scheme = publicOrigin.Scheme;
+        context.Request.Host = HostString.FromUriComponent(publicOrigin);
+    }
+    await next(context);
+});
 app.UseSwagger();
 app.UseSwaggerUI();
 
