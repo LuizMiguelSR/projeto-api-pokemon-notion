@@ -39,6 +39,7 @@ public sealed class SyncService(
 
         foreach (var page in results.EnumerateArray())
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (limit.HasValue && processed >= limit.Value)
             {
                 break;
@@ -77,6 +78,10 @@ public sealed class SyncService(
                     pageResults.Add(skipped);
                     logger.LogInformation("Sync skipped page {PageId}: page_without_liga_url", pageId);
                 }
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
             }
             catch (Exception ex)
             {
