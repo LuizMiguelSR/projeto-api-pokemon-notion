@@ -29,3 +29,16 @@ Configuração na seção LigaPokemon (ou variáveis de ambiente com prefixo Lig
 
 Falhas de navegação, bloqueios e páginas sem preço continuam sendo erros; não são
 gravados preços fictícios. A disponibilidade depende da Liga e de suas proteções.
+
+A captura aguarda até 20 segundos pelos dados de preço após a navegação
+(limitada também pelo timeout total do processo). Essa espera permite que scripts
+atrasados e páginas intermediárias terminem; não garante a resolução de desafios
+que a versão instalada do Scrapling não reconhece, como precursor_interstitial.
+Se o servidor continuar retornando 403, é necessário investigar o acesso nesse
+ambiente; aumentar a espera não equivale a resolver o bloqueio.
+
+Testes da espera (com as dependências instaladas):
+
+```sh
+python -m unittest discover -s Scraping/tests -v
+```

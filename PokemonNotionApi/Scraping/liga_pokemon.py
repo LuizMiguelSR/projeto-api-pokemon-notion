@@ -5,10 +5,35 @@ import sys
 from http.cookies import SimpleCookie
 
 
+def wait_for_card_data(page, timeout_ms):
+    """Allow delayed scripts and intermediate challenge pages to finish loading."""
+    from patchright.sync_api import Error
+
+    for attempt in range(max(1, timeout_ms // 500)):
+        try:
+            ready = page.evaluate("""() =>
+                typeof cards_editions !== 'undefined' &&
+                Array.isArray(cards_editions) &&
+                cards_editions.some(edition => edition && edition.price &&
+                    Object.keys(edition.price).length > 0)
+            """, isolated_context=False)
+            if ready:
+                return True
+        except Error as exc:
+            # A challenge may navigate while its document is being inspected.
+            if "Execution context was destroyed" not in str(exc):
+                raise
+        page.wait_for_timeout(500)
+    print("Card prices did not become available within the page wait limit.",
+          file=sys.stderr)
+    return False
+
+
 def fetch(request):
     from scrapling.fetchers import StealthyFetcher
 
     def capture_runtime(page):
+        wait_for_card_data(page, min(20000, request["timeoutSeconds"] * 500))
         page.evaluate("""() => {
             const data = typeof cards_editions !== 'undefined' ? cards_editions : [];
             const node = document.createElement('script');
