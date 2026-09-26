@@ -144,7 +144,12 @@ public sealed class LigaPokemonScraperService(
                 BuildPreview(html));
         }
 
-        if (IsCloudflareChallenge(html))
+        var document = await ParseHtmlAsync(html, cancellationToken);
+        var prices = ExtractPrices(document);
+
+        // Successful card pages may still include Cloudflare scripts.
+        // Only classify these markers as a challenge when no prices were loaded.
+        if (!HasAnyPrice(prices) && IsCloudflareChallenge(html))
         {
             logger.LogWarning(
                 "Liga Pokemon Cloudflare challenge detected for {SourceUrl}. StatusCode={StatusCode}. Preview={Preview}",
@@ -160,10 +165,8 @@ public sealed class LigaPokemonScraperService(
                 BuildPreview(html));
         }
 
-        var document = await ParseHtmlAsync(html, cancellationToken);
         var title = ExtractTitle(document);
         var image = ExtractCardImage(document) ?? ExtractMetaContent(document, "og:image");
-        var prices = ExtractPrices(document);
         var rarity = ExtractByLabel(document, "Raridade");
         var type = ExtractByLabel(document, "Tipo");
 
