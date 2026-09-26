@@ -20,6 +20,13 @@ builder.Services.AddSingleton<CardPriceHistoryRepository>();
 builder.Services.AddSingleton<BackgroundJobService>();
 builder.Services.AddScoped<CardPriceChartService>();
 builder.Services.AddScoped<SyncService>();
+builder.Services.AddOptions<AutomaticSyncOptions>()
+    .Bind(builder.Configuration.GetSection(AutomaticSyncOptions.SectionName))
+    .Validate(options => double.IsFinite(options.IntervalHours) &&
+        options.IntervalHours > 0 && options.IntervalHours <= 8760,
+        "AutomaticSync:IntervalHours must be greater than zero and at most 8760.")
+    .ValidateOnStart();
+builder.Services.AddHostedService<AutomaticSyncService>();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
