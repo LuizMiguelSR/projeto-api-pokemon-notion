@@ -3,9 +3,10 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Atualizar URLs</title>
+  <title>Atualizar preços</title>
   <link rel="icon" type="image/svg+xml" href="/pokeball.svg?v=20260704-4">
   <link rel="stylesheet" href="/pokemon-loading.css?v=20260704-4">
+  <style>#start { width: auto; min-width: 220px; max-width: 100%; }</style>
 </head>
 <body>
   <main class="shell">
@@ -13,12 +14,11 @@
       <div class="brand">
         <img class="brand-mark" src="/pokeball.svg" alt="">
         <div>
-          <strong>Atualizar URLs</strong>
-          <span>Atualização dos links do Notion</span>
+          <strong>Atualizar preços</strong>
+          <span>Preços de todas as cartas</span>
         </div>
       </div>
       <nav class="nav">
-        <a href="/update-prices">Atualizar preços</a>
         <a href="/search">Busca</a>
         <a href="/prices">Preços</a>
       </nav>
@@ -28,10 +28,10 @@
       <div class="status">
         <span class="pokeball"></span>
         <h1 id="title">Preparando atualização</h1>
-        <p id="message">Ajustando os links dos gráficos com o domínio público atual.</p>
+        <p id="message" aria-live="polite">Atualize os preços de todas as cartas com link da Liga Pokémon e salve o histórico no Notion.</p>
         <div class="progress" id="progress" hidden><span id="progressBar"></span></div>
         <p class="progress-label" id="progressLabel" hidden>0%</p>
-        <button id="start" type="button">Iniciar atualização</button>
+        <button id="start" type="button">Atualizar todos os preços</button>
         <pre class="result" id="result" hidden></pre>
       </div>
     </section>
@@ -42,12 +42,12 @@
     </footer>
   </main>
 
-  <script src="/job-page.js?v=20260704-4"></script>
+  <script src="/job-page.js?v=20260926-prices"></script>
   <script>
     setupJobPage({
-      startEndpoint: "/api/jobs/chart-urls-refresh",
-      title: "Atualizando URLs",
-      doneTitle: "Gotcha!!!",
+      startEndpoint: "/api/jobs/update-prices",
+      title: "Atualizando preços",
+      doneTitle: "Preços atualizados!",
       errorTitle: "A atualização falhou."
     });
   </script>

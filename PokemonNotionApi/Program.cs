@@ -238,6 +238,11 @@ app.MapGet("/refresh", async (IWebHostEnvironment environment, CancellationToken
 }).AllowAnonymous()
     .RequireRateLimiting("PublicEndpoints");
 
+app.MapGet("/update-prices", async (IWebHostEnvironment environment, CancellationToken cancellationToken) =>
+{
+    return await ServeHtmlAsync("update-prices.html", environment, cancellationToken);
+}).RequireAuthorization("AllowedUsers");
+
 app.MapGet("/prices", async (IWebHostEnvironment environment, CancellationToken cancellationToken) =>
 {
     return await ServeHtmlAsync("prices.html", environment, cancellationToken);
@@ -353,6 +358,15 @@ IResult RefreshChartUrlsAsync(BackgroundJobService jobs)
 var api = app.MapGroup("/api").RequireAuthorization("AllowedUsers");
 
 api.MapPost("/sync/run", RunSyncAsync);
+api.MapPost("/jobs/update-prices", (BackgroundJobService jobs) =>
+{
+    var job = jobs.Start("update-prices", async (services, progress, cancellationToken) =>
+    {
+        return await services.GetRequiredService<SyncService>()
+            .SyncDatabaseWithProgressAsync(null, progress, cancellationToken);
+    });
+    return Results.Accepted($"/api/jobs/{job.Id}", job);
+});
 api.MapPost("/sync/run/search", RunSearchSyncAsync);
 api.MapPost("/cards/{pageId}/sync", RunPageSyncAsync);
 api.MapPost("/cards/chart-urls/refresh", RefreshChartUrlsAsync);

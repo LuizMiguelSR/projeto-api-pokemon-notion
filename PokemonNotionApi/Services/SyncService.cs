@@ -19,7 +19,11 @@ public sealed class SyncService(
     private readonly NotionOptions _options = options.Value;
     private readonly AppOptions _appOptions = appOptions.Value;
 
-    public async Task<object> SyncDatabaseAsync(int? limit, CancellationToken cancellationToken)
+    public Task<object> SyncDatabaseAsync(int? limit, CancellationToken cancellationToken)
+        => SyncDatabaseWithProgressAsync(limit, null, cancellationToken);
+
+    public async Task<object> SyncDatabaseWithProgressAsync(
+        int? limit, IProgress<JobProgress>? progress, CancellationToken cancellationToken)
     {
         var db = await notionClientService.QueryDatabaseAsync(cancellationToken);
         if (db is null || !db.Value.TryGetProperty("results", out var results))
@@ -36,6 +40,9 @@ public sealed class SyncService(
         var failed = 0;
         var errors = new List<object>();
         var pageResults = new List<object>();
+
+        var total = limit.HasValue ? Math.Min(limit.Value, results.GetArrayLength()) : results.GetArrayLength();
+        progress?.Report(new JobProgress(0, total, "Consultando os preços na Liga Pokémon."));
 
         foreach (var page in results.EnumerateArray())
         {
@@ -90,6 +97,11 @@ public sealed class SyncService(
                 errors.Add(error);
                 pageResults.Add(error);
                 logger.LogError(ex, "Sync failed for page {PageId}: {Error}", pageId, ex.Message);
+            }
+            finally
+            {
+                progress?.Report(new JobProgress(processed, total,
+                    $"Processadas {processed} de {total} cartas. Atualizadas: {updated}. Falhas: {failed}."));
             }
         }
 

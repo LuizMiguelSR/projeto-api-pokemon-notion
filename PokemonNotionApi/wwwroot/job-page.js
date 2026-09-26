@@ -22,7 +22,8 @@ function setupJobPage(options) {
     }
 
     if (response.redirected || response.status === 401) {
-      throw new Error("Você não está logado com um e-mail permitido. Acesse /auth/login e tente novamente.");
+      window.location.assign("/auth/login?returnUrl=" + encodeURIComponent(window.location.pathname));
+      throw new Error("Sua sessão expirou. Entre novamente para continuar.");
     }
 
     if (response.status === 403) {
@@ -67,9 +68,12 @@ function setupJobPage(options) {
     result.textContent = JSON.stringify(job.result || job.error || job, null, 2);
 
     if (job.state === "completed") {
-      title.textContent = options.doneTitle;
-      title.className = "ok";
-      message.textContent = "Processamento finalizado com sucesso.";
+      const failed = Number(job.result?.failed || 0);
+      title.textContent = failed > 0 ? "Atualização concluída com falhas" : options.doneTitle;
+      title.className = failed > 0 ? "error" : "ok";
+      message.textContent = job.result && "updated" in job.result
+        ? `Cartas processadas: ${job.result.processed}. Atualizadas: ${job.result.updated}. Falhas: ${failed}.`
+        : "Processamento finalizado com sucesso.";
       pokeball?.classList.add("caught");
       start.disabled = false;
       return;
@@ -103,7 +107,7 @@ function setupJobPage(options) {
     result.hidden = true;
     title.textContent = options.title;
     title.className = "";
-    message.textContent = "Criando job em background.";
+    message.textContent = "Iniciando atualização...";
     pokeball?.classList.remove("caught");
 
     try {
