@@ -1,4 +1,4 @@
-﻿using System.Globalization;
+using System.Globalization;
 using System.Net;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -13,6 +13,7 @@ namespace PokemonNotionApi.Services;
 
 public sealed class LigaPokemonScraperService(
     HttpClient httpClient,
+    ScraplingPageFetcher scrapling,
     IOptions<LigaPokemonOptions> options,
     ILogger<LigaPokemonScraperService> logger)
 {
@@ -119,32 +120,26 @@ public sealed class LigaPokemonScraperService(
 
     public async Task<CardData?> GetCardAsync(string sourceUrl, CancellationToken cancellationToken)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Get, sourceUrl);
-        request.Headers.UserAgent.ParseAdd(_options.UserAgent);
-        request.Headers.Accept.ParseAdd("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
-        request.Headers.AcceptLanguage.ParseAdd(_options.AcceptLanguage);
-        request.Headers.Referrer = new Uri(_options.BaseUrl.TrimEnd('/') + "/");
-        AddCookieHeader(request);
-        using var response = await httpClient.SendAsync(request, cancellationToken);
-        var html = await response.Content.ReadAsStringAsync(cancellationToken);
+        var (statusCode, html) = await scrapling.FetchAsync(sourceUrl, cancellationToken);
+        var reasonPhrase = ((HttpStatusCode)statusCode).ToString();
 
-        if (!response.IsSuccessStatusCode)
+        if (statusCode is < 200 or >= 300)
         {
             logger.LogWarning(
                 "Liga Pokemon returned HTTP {StatusCode} for {SourceUrl}. Reason={ReasonPhrase}. Preview={Preview}",
-                (int)response.StatusCode,
+                statusCode,
                 sourceUrl,
-                response.ReasonPhrase,
+                reasonPhrase,
                 BuildPreview(html));
 
             throw new LigaPokemonScraperException(
                 IsCloudflareChallenge(html)
                     ? "Liga Pokemon blocked or rejected the request."
                     : "Liga Pokemon returned a non-success response.",
-                (int)response.StatusCode,
+                statusCode,
                 IsCloudflareChallenge(html)
                     ? "Cloudflare or anti-bot page returned instead of card page"
-                    : response.ReasonPhrase ?? "HTTP request failed",
+                    : reasonPhrase ?? "HTTP request failed",
                 sourceUrl,
                 BuildPreview(html));
         }
@@ -154,12 +149,12 @@ public sealed class LigaPokemonScraperService(
             logger.LogWarning(
                 "Liga Pokemon Cloudflare challenge detected for {SourceUrl}. StatusCode={StatusCode}. Preview={Preview}",
                 sourceUrl,
-                (int)response.StatusCode,
+                statusCode,
                 BuildPreview(html));
 
             throw new LigaPokemonScraperException(
                 "Liga Pokemon blocked or rejected the request.",
-                (int)response.StatusCode,
+                statusCode,
                 "Cloudflare or anti-bot page returned instead of card page",
                 sourceUrl,
                 BuildPreview(html));
@@ -182,7 +177,7 @@ public sealed class LigaPokemonScraperService(
 
             throw new LigaPokemonScraperException(
                 "Liga Pokemon returned a page, but no price data could be extracted.",
-                (int)response.StatusCode,
+                statusCode,
                 "Card page HTML did not contain price data",
                 sourceUrl,
                 BuildPreview(html));
