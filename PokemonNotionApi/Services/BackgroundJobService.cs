@@ -30,10 +30,10 @@ public sealed class BackgroundJobService(IServiceScopeFactory scopeFactory, ILog
                     job.Message = value.Message;
                 });
                 var result = await work(scope.ServiceProvider, progress, CancellationToken.None);
-                job.State = "completed";
                 job.Result = result;
                 job.Processed = job.Total ?? job.Processed;
                 job.Message = "Processamento finalizado.";
+                job.State = "completed";
             }
             catch (Exception ex)
             {
