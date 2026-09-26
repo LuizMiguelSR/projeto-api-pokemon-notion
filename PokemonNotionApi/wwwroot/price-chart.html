@@ -393,6 +393,7 @@
       </div>
       <div class="actions">
         <button id="refresh" type="button" hidden>Atualizar</button>
+        <a id="login" hidden>Entrar para atualizar</a>
         <a id="source" class="button" href="#" target="_blank" rel="noreferrer">Liga Pokémon</a>
       </div>
     </header>
@@ -517,10 +518,28 @@
       render();
     }
 
+    const loginLink = document.getElementById("login");
+    loginLink.href = "/auth/login?returnUrl=" + encodeURIComponent(location.pathname);
+
+    async function requireSyncResponse(response) {
+      if (response.status === 401) {
+        loginLink.hidden = false;
+        els.refresh.hidden = true;
+        throw new Error("Sua sessão expirou. Entre novamente para atualizar.");
+      }
+      if (response.status === 403)
+        throw new Error("Sua conta não tem permissão para atualizar esta carta.");
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        throw new Error(error.detail || error.message || "Não foi possível sincronizar esta carta.");
+      }
+    }
+
     async function showRefreshWhenAuthorized() {
       try {
         const response = await fetch("/auth/me", { headers: { Accept: "application/json" } });
         els.refresh.hidden = !response.ok;
+        loginLink.hidden = response.status !== 401;
       } catch {
         els.refresh.hidden = true;
       }
@@ -532,7 +551,7 @@
 
       try {
         const response = await fetch(`/api/cards/${encodeURIComponent(pageId)}/sync`, { method: "POST" });
-        if (!response.ok) throw new Error("Não foi possível sincronizar esta carta.");
+        await requireSyncResponse(response);
 
         await load();
       } finally {
@@ -788,7 +807,9 @@
     });
 
     function showError(error) {
-      els.message.textContent = error.message;
+      els.message.textContent = error instanceof TypeError
+        ? "Não foi possível conectar ao servidor. Verifique sua conexão e tente novamente."
+        : error.message;
     }
 
     showRefreshWhenAuthorized();
